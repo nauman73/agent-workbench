@@ -8,6 +8,11 @@ $here   = Split-Path -Parent $MyInvocation.MyCommand.Path
 # the live copy tests the live script and running the repo copy tests the repo
 # script, with no path juggling either way.
 $script = Join-Path $here 'ctx-watch.ps1'
+# Which PowerShell runs the script under test. On Windows that is the same
+# powershell.exe the launcher uses in production, so the tests match reality
+# there; everywhere else only pwsh exists. $IsWindows is absent in Windows
+# PowerShell 5.1, hence the $env:OS fallback.
+$psExe  = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'powershell.exe' } else { 'pwsh' }
 # Scratch data goes to TEMP, never into the repo working tree.
 $tmp    = Join-Path ([System.IO.Path]::GetTempPath()) 'ctx-watch-tests'
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
@@ -67,7 +72,7 @@ function Invoke-Hook {
         session_id      = 'test-session'
         cwd             = $Cwd
     } | ConvertTo-Json -Compress
-    $out = $payload | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
+    $out = $payload | & $psExe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
     if ($null -eq $out) { return '' }
     return ($out -join "`n").Trim()
 }
@@ -229,10 +234,10 @@ $empty = Join-Path $tmp 'empty.jsonl'
 Set-Content -LiteralPath $empty -Value '' -Encoding UTF8
 Assert-Eq 'empty transcript - empty stdout' '' (Invoke-Hook 'UserPromptSubmit' $empty)
 
-$out = '' | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
+$out = '' | & $psExe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
 Assert-Eq 'empty stdin - empty stdout' '' (("$out").Trim())
 
-$out = '{"hook_event_name":"PreToolUse","transcript_path":"x"}' | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
+$out = '{"hook_event_name":"PreToolUse","transcript_path":"x"}' | & $psExe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
 Assert-Eq 'unknown hook event - empty stdout' '' (("$out").Trim())
 
 Write-Host "`n=== 9. Stdout discipline ===" -ForegroundColor Cyan

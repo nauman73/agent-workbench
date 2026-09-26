@@ -75,7 +75,7 @@ try {
         bandLabel   = [char]0x2014 + ' switch point'
     }
     $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR }
-            else { Join-Path $env:USERPROFILE '.claude' }
+            else { Join-Path $HOME '.claude' }
 
     $cfg = Merge-Config $cfg (Read-JsonFile (Join-Path $base 'ctx-watch.json'))
     if ($in.cwd) {

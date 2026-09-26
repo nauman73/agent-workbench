@@ -22,21 +22,23 @@ REM fails silently and we still exit clean.
 exit /b 0
 CMDBLOCK
 
-# POSIX section - also reached by Git Bash on Windows.
+# POSIX section - reached by Git Bash on Windows, and by any POSIX host.
 #
-# Only Windows carries powershell.exe / pwsh.exe. Git Bash sets OS=Windows_NT;
-# WSL and real POSIX hosts do not. Gating on that keeps this a no-op everywhere
-# the .ps1 could not work anyway (it reads USERPROFILE and Windows paths), and
-# avoids an every-turn error for anyone who installs the plugin on macOS or
-# Linux.
-if [ "$OS" = "Windows_NT" ]; then
-  DIR="$(cd "$(dirname "$0")" && pwd)"
-  for ps in powershell.exe pwsh.exe; do
-    if command -v "$ps" >/dev/null 2>&1; then
-      exec "$ps" -NoProfile -ExecutionPolicy Bypass -File "$DIR/ctx-watch.ps1"
-    fi
-  done
-fi
+# The names differ by platform: Windows carries powershell.exe and sometimes
+# pwsh.exe, while PowerShell 7 on Linux and macOS installs as plain pwsh. The
+# first one found wins, so a Windows host keeps using powershell.exe - the same
+# interpreter the batch section above uses - and everywhere else falls through
+# to pwsh. -ExecutionPolicy is a Windows concept but pwsh accepts and ignores
+# it off Windows, so one invocation serves both and the branches cannot drift.
+#
+# If no PowerShell is present the loop simply ends and the exit below runs,
+# which is the correct outcome: silence, not an error every turn.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+for ps in powershell.exe pwsh.exe pwsh; do
+  if command -v "$ps" >/dev/null 2>&1; then
+    exec "$ps" -NoProfile -ExecutionPolicy Bypass -File "$DIR/ctx-watch.ps1"
+  fi
+done
 
 # Nothing to run. Exit 0 with EMPTY stdout: on UserPromptSubmit any stdout at
 # all is injected into the model's context as an instruction.
