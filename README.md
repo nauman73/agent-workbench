@@ -57,10 +57,13 @@ say in its own section how far it reaches; the answer is not the same for all of
 | [`ctx-watch`](hooks/) | hook | Claude Code, plugin install only · Windows |
 
 The **Works with** column applies the rule above per item, and shows why the two
-limits on a hook need stating separately: `ctx-watch` is Windows-only because it is
-written in PowerShell, which a port would fix, and Claude-Code-only because it is a
-hook, which nothing fixes. Installed off Windows it is a deliberate silent no-op
-rather than an error every turn.
+limits on a hook need stating separately. `ctx-watch` is Claude-Code-only because it
+is a hook, which nothing fixes. Its Windows limit is a different kind: a statement of
+what has been tested, not of what the code can do. The script is PowerShell, and it
+runs on Linux under PowerShell 7 when registered by hand in `settings.json`; the
+plugin install, the route this catalogue describes, stays listed as Windows until a
+live session has run it elsewhere. The
+[hook's README](hooks/README.md#requirements-and-portability) has the full matrix.
 
 What each one does:
 

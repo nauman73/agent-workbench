@@ -175,13 +175,16 @@ business blocking a turn.
 
 ## Requirements and portability
 
-**Windows, and the Claude Code plugin route only.** These are two separate limits with two
-different answers, and it is worth being clear about which is which:
+**PowerShell, and Claude Code only.** These are two separate limits with two different answers,
+and it is worth being clear about which is which:
 
-- **Windows** is a property of this implementation. The script is PowerShell and the launcher is a
-  `cmd`/`sh` polyglot. A bash port would lift this limit. Until someone writes one, the launcher
-  gates on `OS=Windows_NT` — set by Git Bash but not by WSL or a real POSIX host — so a macOS or
-  Linux install is a silent no-op rather than an error every turn.
+- **PowerShell** is a property of this implementation. The script is PowerShell and the launcher is
+  a `cmd`/`sh` polyglot. Windows ships PowerShell; Linux and macOS need PowerShell 7, which installs
+  as `pwsh`. With it present the hook runs; without it the launcher finds nothing to start and exits
+  silently, rather than raising an error every turn. On Windows the launcher prefers
+  `powershell.exe`; everywhere else it tries only `pwsh` — including WSL, which puts the Windows
+  `PATH` on its own and would otherwise find a `powershell.exe` that can read neither a Linux script
+  path nor a Linux transcript.
 - **Claude Code** is not liftable by anyone. A hook is executed by the harness, not read by the
   model, so it exists only where that harness does. This is the sharp difference from a skill: a
   skill is portable markdown any agent can read.
@@ -189,7 +192,7 @@ different answers, and it is worth being clear about which is which:
 Within Claude Code, **only the plugin install delivers this hook.** The other install routes carry
 skills alone. Nothing scans `~/.claude/hooks/` — that folder is pure convention — and
 `hooks/hooks.json` is read for plugins only. The registration for a local install lives in
-`~/.claude/settings.json` and has to be written by hand:
+`~/.claude/settings.json` and has to be written by hand. On Windows:
 
 ```json
 {
@@ -205,6 +208,40 @@ skills alone. Nothing scans `~/.claude/hooks/` — that folder is pure conventio
   }
 }
 ```
+
+On Linux and macOS, call `pwsh` directly instead of the launcher:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command",
+                     "command": "pwsh -NoProfile -File \"$HOME/.claude/hooks/ctx-watch.ps1\"" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command",
+                     "command": "pwsh -NoProfile -File \"$HOME/.claude/hooks/ctx-watch.ps1\"" } ] }
+    ]
+  }
+}
+```
+
+The launcher adds nothing there, and a copy made by hand usually loses its executable bit, which
+would make the shell refuse to run it.
+
+What has been verified in a live session, and what has not:
+
+| | Windows | Linux | macOS |
+|---|---|---|---|
+| Registered by hand in `settings.json` | verified | verified | not tested |
+| Plugin install | not tested | not tested | not tested |
+
+The plugin row rests on two things no live session has yet exercised: Claude Code resolving
+`${CLAUDE_PLUGIN_ROOT}` in [`hooks.json`](hooks.json) and firing the hook from an installed plugin,
+and — off Windows — the launcher running from the plugin's own folder. The launcher is stored as
+executable so that a plugin install keeps the bit, and both of its branches reach PowerShell when
+driven directly, but that is not the same as a live session. macOS runs the same `pwsh` as Linux,
+with nothing platform-specific in the script.
 
 That asymmetry is structural rather than an oversight:
 
@@ -233,10 +270,15 @@ LF-only file. [`.gitattributes`](../.gitattributes) pins this; do not "fix" it t
 live copy, run the tests there, then publish:
 
 ```powershell
-& "$env:USERPROFILE\.claude\hooks\test-ctx-watch.ps1"   # 37 tests
-./tools/sync-hook.ps1 -Check                            # drift, without writing
-./tools/sync-hook.ps1                                   # publish into hooks/
+& "$HOME/.claude/hooks/test-ctx-watch.ps1"   # 37 tests
+./tools/sync-hook.ps1 -Check                 # drift, without writing
+./tools/sync-hook.ps1                        # publish into hooks/
 ```
+
+**Run the suite from a PowerShell prompt, not through a Bash shell.** Under Bash on Windows, the
+child `powershell.exe` falls back to a legacy code page and replaces the em dash in the default
+`bandLabel` with a plain `-`. Six stepping and warning tests, plus "works with no config file at
+all", then fail for a reason that has nothing to do with the code.
 
 **Never edit `hooks/` in this repo** — the next sync overwrites it without warning. `-Check` is
 there to catch exactly that mistake, reporting `same` / `DIFFERS` / `MISSING IN REPO` /
@@ -249,6 +291,7 @@ tests the live script and running the repo copy tests the repo script. `hooks.js
 
 The test suite covers all six ladder rungs, the `~` marker, stepping above and below the band, the
 real-user versus tool-result distinction, the crossing test including re-arming, all four config
-layers, and every failure path exiting silently with empty stdout. The launcher is tested under
-direct PowerShell, `cmd.exe` and Git Bash, with a non-Windows simulation asserting 0 bytes on
-stdout, and with both path-separator forms under each shell.
+layers, and every failure path exiting silently with empty stdout. It passes on Windows and, under
+`pwsh`, on Linux. The launcher is not part of the suite; it has been driven by hand through
+`cmd.exe`, through `sh` with `OS=Windows_NT` (the Git Bash path), and through `sh` with `OS` unset
+(the path every other POSIX host takes), reaching PowerShell and printing the same readout each way.
