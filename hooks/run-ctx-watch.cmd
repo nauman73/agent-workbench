@@ -25,16 +25,23 @@ CMDBLOCK
 # POSIX section - reached by Git Bash on Windows, and by any POSIX host.
 #
 # The names differ by platform: Windows carries powershell.exe and sometimes
-# pwsh.exe, while PowerShell 7 on Linux and macOS installs as plain pwsh. The
-# first one found wins, so a Windows host keeps using powershell.exe - the same
-# interpreter the batch section above uses - and everywhere else falls through
-# to pwsh. -ExecutionPolicy is a Windows concept but pwsh accepts and ignores
-# it off Windows, so one invocation serves both and the branches cannot drift.
+# pwsh.exe, while PowerShell 7 on Linux and macOS installs as plain pwsh. On
+# Windows (Git Bash sets OS=Windows_NT) powershell.exe comes first - the same
+# interpreter the batch section above uses. Everywhere else only pwsh is tried:
+# WSL puts the Windows PATH on its own by default, so powershell.exe is found
+# there too, and it cannot open a Linux script path or read a Linux transcript.
+# -ExecutionPolicy is a Windows concept but pwsh accepts and ignores it off
+# Windows, so one invocation serves both and the branches cannot drift.
 #
 # If no PowerShell is present the loop simply ends and the exit below runs,
 # which is the correct outcome: silence, not an error every turn.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-for ps in powershell.exe pwsh.exe pwsh; do
+if [ "$OS" = "Windows_NT" ]; then
+  candidates="powershell.exe pwsh.exe pwsh"
+else
+  candidates="pwsh"
+fi
+for ps in $candidates; do
   if command -v "$ps" >/dev/null 2>&1; then
     exec "$ps" -NoProfile -ExecutionPolicy Bypass -File "$DIR/ctx-watch.ps1"
   fi
