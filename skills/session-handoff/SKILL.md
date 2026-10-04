@@ -50,6 +50,7 @@ Use these conventions consistently throughout the handoff:
 - **Project files** — write project-relative paths as-is: `frontend/src/lib/api.ts`, `.claude/handoff-users-feature.md`, `backend/app/models/user.py`. These are the default and need no decoration; the project root is implied by `git status` / `git log` checks. A bare `.claude/...` always means the project's `.claude/`, never the user-level one.
 - **User-level Claude files** (skills, settings, memory under `~/.claude/`) — always prefix with `~/.claude/`: `~/.claude/skills/session-handoff/SKILL.md`, `~/.claude/CLAUDE.md`, `~/.claude/projects/<encoded-cwd>/...`. Never write these as bare `.claude/...` — that collides with the project's own `.claude/` directory and is the most likely source of confusion in this new layout.
 - **Absolute paths** (anything outside both roots — system configs, other repos on the machine, network mounts, a Copilot chat JSONL under `%APPDATA%\Code\User\workspaceStorage\...`) — spell out the full path: `C:\Users\<user>\Documents\notes\foo.md`, `/etc/nginx/nginx.conf`, `D:\Work\Other\sibling-repo\src\bar.py`.
+- **Never point into a session scratchpad or temp folder.** A session's scratchpad, `/tmp`, `%TEMP%` and similar folders are cleared or are invisible to the next session, so a link into one is broken by the time anyone follows it. If the handoff needs a file that lives there (a draft, a test fixture, a generated report), copy it to a durable location first, by default the project's `.claude/`, and link the copy.
 
 **On first mention of any non-project path in the doc, add a brief parenthetical so the reader doesn't have to deduce the location.** Example:
 
@@ -57,44 +58,62 @@ Use these conventions consistently throughout the handoff:
 
 Subsequent mentions of the same path can drop the parenthetical — the reader already knows where it lives.
 
-This matters most in the **Pending TODOs** and **How to resume** sections, where a future agent will act on the path directly. A path that turns out to live outside the repo silently breaks "commit and push" instructions, since user-level files cannot be part of a project commit. If a TODO involves a path outside the project root, call that out explicitly: *"Note: `~/.claude/skills/foo/SKILL.md` is user-level (outside the repo) and is NOT part of this commit."*
+This matters most in the **TODOs** and **How to resume** sections, where a future agent will act on the path directly. A path that turns out to live outside the repo silently breaks "commit and push" instructions, since user-level files cannot be part of a project commit. If a TODO involves a path outside the project root, call that out explicitly: *"Note: `~/.claude/skills/foo/SKILL.md` is user-level (outside the repo) and is NOT part of this commit."*
 
 ## SAVE mode — what to write
 
 The handoff must be **self-contained**. The future session has zero memory of this conversation. Don't write "continue what we were doing" — write the goal explicitly. Don't write "the file we edited" — write the path. Don't reference earlier turns.
 
-Use this exact template:
+A handoff is a **snapshot of now, not a record of how we got here**. Every resume reads the whole file, so every line of history is paid for again by every future session, and none of it helps the next step. A handoff that keeps growing across weeks of saves can reach hundreds of kilobytes and cost well over 100K tokens before any work starts. History has better homes: git holds what was done, the project's documents hold what is true, and a decision log, if the user keeps one (see "Decisions leaving the handoff" below), holds how decisions changed.
+
+Use this template:
 
 ```markdown
 # Handoff: <Task title>
 
-**Created:** <YYYY-MM-DD HH:MM> · **Branch:** <git branch> · **Status:** <in-progress | blocked | ready-for-review>
+**Created:** <YYYY-MM-DD HH:MM> · **Updated:** <YYYY-MM-DD HH:MM> · **Branch:** <git branch> · **Status:** <in-progress | blocked | ready-for-review>
+Previous handoff: <path>  ← only when this one replaced or split from another handoff; otherwise omit the line
+Related handoff: <path>  ← only when another open handoff split from this one; otherwise omit the line
 
 ## Goal
 <1–3 sentences. What is the user trying to accomplish? Why does it matter? Be concrete enough that someone with no context understands the objective.>
 
 ## Current state
-<What has been done so far. Bullet points. Reference exact files and line numbers where relevant, e.g. `frontend/src/lib/api.ts:42-58`. Qualify any path that is not project-relative (see "Path qualification" above). Mention commits if any were made.>
+<Where things stand now — not how they got here. Bullet points. Reference exact files and line numbers where relevant, e.g. `frontend/src/lib/api.ts:42-58`. Qualify any path that is not project-relative (see "Path qualification" above). Name commits that matter for the next step; git holds the rest.>
 
 ## Next step
 <The single next concrete action to take. Be specific: which file, which function, what change. If there are multiple parallel threads, list them in priority order.>
 
-## Pending TODOs
-- [ ] <item>
-- [ ] <item>
+## TODOs
+### <Owner — e.g. the user, a teammate, the agent>
+- [ ] <action, one line> — <link to the document section holding the detail, if any>
+### Parked
+- [ ] <action> — <what it is waiting for>
 
-## Key decisions & context
-<Non-obvious decisions made in this session that aren't captured in the code or git log. Why a particular approach was chosen, what was ruled out, what constraints apply. Skip this section if there's nothing surprising.>
+## Recent decisions
+<Decisions from recent sessions that the next step depends on and that are not yet written anywhere else. One or two sentences each: the decision and why. Skip the section if there are none.>
 
 ## Open questions / blockers
 <Anything waiting on the user, a teammate, an external system, or an unresolved design question. If nothing, write "None.">
 
+## Linked files
+- Decision log: <path> (latest: D-NNN)  ← only if one exists
+- House rules: <path>  ← only if one exists
+
 ## How to resume
-1. Read this file in full.
+1. Read this file in full, then the house rules if linked. Read the decision log and transcripts only when the work needs them.
 2. `git status` and `git log -5` to confirm branch state matches "Branch" above.
 3. <Any project-specific setup: env vars to set, services to start, migrations to run>
 4. Begin from "Next step".
 ```
+
+**TODOs are one line each.** Name the action and, where there is detail, link to the document section that holds it rather than copying the detail in. Each item appears once, under its owner. Parked items go under **Parked** with what they wait for. Done items are removed, not ticked and kept: git and the documents already record them.
+
+**Keep formatting minimal.** No emoji. Use bold only where missing it would cause harm, such as a warning that must not be skimmed past. A page where everything is emphasised has nothing emphasised, and the decoration costs tokens on every resume.
+
+**House rules live in their own file.** Standing working agreements, meaning constraints that apply to every session of this work whatever the next step is ("never push without asking", "run the suite natively, not through Bash"), go in a separate file linked under **Linked files**, by default `.claude/house-rules.md`. They change rarely, so copying them into every handoff repeats them in every save, and the copies drift. If the user states a new standing rule during the session, offer to add it to that file.
+
+**Permanent rules may belong in the project's `CLAUDE.md` instead**, meaning rules that hold for anyone working in the project, indefinitely (a commit format, a folder that is never committed). That file is loaded into every session automatically and is usually shared with the team, which is exactly why it is not yours to change unasked. You may suggest moving a rule there, and the user may ask you to add one, but **never write to `CLAUDE.md` without the user's explicit confirmation** of the exact rule being added.
 
 End your reply to the user with a single line:
 
@@ -109,7 +128,9 @@ When the user wants to pick up prior work, do NOT immediately start coding. The 
 Steps, in order:
 
 1. **Find the doc.** If the user named a path, use it. If they said "the handoff" without specifying, run `Glob .claude/handoff-*.md` and pick the most recently modified one — but if there's more than one match and the right one isn't obvious, ask the user which. If `.claude/` has no matches, also try the legacy location `Glob plans/handoff-*.md` for handoffs written before this skill moved its default location; if you find one there, note the legacy location to the user when you echo back the summary so they know to expect future handoffs in `.claude/`.
-2. **Read the doc in full** with the Read tool. Do not skim or read partial ranges.
+2. **Read the doc in full** with the Read tool. Do not skim or read partial ranges: a half-read handoff produces a confident resume from the wrong state. If the doc's status line says it is **closed and replaced by** another handoff, tell the user and offer to resume from the replacement instead.
+   **Then read the house-rules file**, if the handoff links one, also in full. It is short, and the rules in it exist for the mistakes that cost the most, so it is read on every resume rather than left to a judgement about whether the next piece of work falls under it.
+   **Leave the other linked files unread for now.** The decision log and any saved transcripts are listed in the handoff so they can be found, not so they are loaded on every resume; they are also the files that grow large. Read the decision log when a question turns on why something was decided, and a transcript only when the handoff cannot answer a specific question.
 3. **Verify the working state matches.** Run `git status` and `git log -5 --oneline`. Compare against the "Branch" line in the handoff. If they don't match (different branch, missing modified files, advanced commits), surface the discrepancy to the user before proceeding — do not silently reconcile.
 4. **Echo back a tight summary** to the user: 2–4 lines covering the goal, the next step from the doc, and any open question or blocker. This proves you read it and gives the user a chance to correct stale info.
 5. **Stop and wait for explicit instruction.** Do not begin "Next step" automatically. End with something like *"Ready to continue from `<next-step>` — say the word and I'll start, or tell me to do something else."*
@@ -181,13 +202,13 @@ Only if Step 0 found no preferences block. Use `AskUserQuestion` with a single q
 
 Options:
 - **Yes, save it** — proceed to Step 2.
-- **No, skip it** — record the answer via the Step 6 preferences block (so this task does not ask again), then finish the save and print the "To resume…" line. Do not add a transcript reference to the handoff.
+- **No, skip it** — record the answer via the Step 6 preferences block (so this task does not ask again), then go to Step 7. Do not add a transcript reference to the handoff.
 
 The wording "alongside" matters — the user should understand the transcript is *supplementary*, not a replacement for the handoff.
 
 ### Step 1.5 — ask which environment this session is
 
-The transcript lives in a different place and format depending on whether this is a **Claude Code** session or a **GitHub Copilot** chat. We do not auto-detect this — detection is not reliable enough to silently act on, and a wrong guess archives the wrong conversation. Ask, and act on the answer.
+The transcript lives in a different place and format depending on whether this is a **Claude Code** session or a **GitHub Copilot** chat. The skill does not auto-detect this — detection is not reliable enough to silently act on, and a wrong guess archives the wrong conversation. Ask, and act on the answer.
 
 Use `AskUserQuestion`:
 
@@ -350,47 +371,133 @@ re-asking. In that case write the block, skip the transcript section, and go to 
 
 If Step 0 *did* find a block, leave it exactly as it is — the user may have edited it deliberately.
 
-**Then** add the transcript reference as a new section just before "How to resume":
+**Then** reference the transcript in a single section just before "How to resume". If the handoff already has this section, update it in place rather than adding another: replace the latest path with the new one and keep the "Earlier sessions" line. A handoff saved many times keeps exactly one transcript section of a fixed size, while every earlier transcript stays findable on disk through the pattern.
 
 ```markdown
 ## Full session transcript (reference only)
 
-The complete conversation transcript for the session that produced this handoff is saved at:
+Latest session: `<relative path to the new transcript, e.g. .claude/transcript-<slug>-<YYYY-MM-DD-HHMM>.md>`
+Earlier sessions: `<the same folder>/transcript-<slug>-*`  ← only once an earlier transcript exists; no extension, so both `.md` and `.jsonl` match
 
-`<relative path to the transcript file, e.g. .claude/transcript-<slug>-<YYYY-MM-DD-HHMM>.jsonl>`
-
-**Consult this transcript only when necessary.** The handoff above is the intended source of truth; the transcript is here for cases where you need the exact wording of a prior instruction, the full text of an error, or the reasoning behind a path that was tried and abandoned. Do not load or read it as part of normal resume — read it only if a specific question cannot be answered from the handoff alone.
+**Consult these transcripts only when necessary.** The handoff above is the intended source of truth; the transcripts are here for cases where you need the exact wording of a prior instruction, the full text of an error, or the reasoning behind a path that was tried and abandoned. Do not load or read them as part of normal resume — read one only if a specific question cannot be answered from the handoff alone.
 ```
+
+If earlier transcripts were saved under a different slug or folder (for example before a split), write that pattern instead, or list both patterns.
 
 The "reference only" framing matters. Without it, a resuming session may try to read the entire transcript as part of resume setup, which defeats the point of having a concise handoff. State explicitly that the transcript is on-demand, not default reading.
 
 ### Step 7 — finish
 
-Print the standard "To resume…" line as before. The user now has both the handoff (primary) and the transcript (fallback) saved together.
+Run the size check (next section), then print the standard "To resume…" line as before. The user now has both the handoff (primary) and the transcript (fallback) saved together.
+
+## SAVE mode — size check
+
+After every save, check the handoff's size on disk, measured on the file as just saved. This is also the one point at which the convert offer is made (see "Rewrite, never append" below), so the user gets at most one offer per save:
+
+- **Over 100 KB, current template** — the size warning below.
+- **Over 100 KB, older layout, no "older layout kept" note** — the combined offer below, not two offers.
+- **100 KB or less, older layout, no note** — the convert offer alone.
+- **Older layout with the note** — the user has already declined converting; do not offer it again. A size warning over 100 KB still applies.
+
+If it is **over 100 KB**, tell the user, just before the "To resume…" line:
+
+> The handoff is now <N> KB, roughly <N/4>K–<N/2>K tokens to read on every resume. The largest parts are <the two or three biggest sections>. I can trim it if you want; otherwise it stays as it is.
+
+The range is because the cost per kilobyte depends on how the file is written: plain prose runs at about 4 bytes per token, while tables, symbols and heavy formatting can halve that.
+
+**This is a warning, not an action.** Do not trim, move or drop anything unless the user asks. They may know that the size is justified, and deleting from a handoff on your own judgement is how context gets lost. If they do ask, the options are in "Decisions leaving the handoff" below, and the same choices apply to old state and history: keep it, move it to a document, the decision log or memory, or drop it.
+
+**If the doc also predates the current template**, do not make the trim offer and the convert offer one after the other. Converting is itself the biggest trim, since dated layers and inline copies go, so make one offer that covers both:
+
+> The handoff is now <N> KB (roughly <N/4>K–<N/2>K tokens per resume) and uses an older layout. The largest parts are <sections>. I can convert it to the current template, which would also bring it down to about <estimate> KB; otherwise it stays as it is.
+
+**Converting must not lose decisions.** Dated layers and old "Key decisions" sections often hold decisions. Before converting, collect every decision that would not survive into the new template's sections and put them through the decision table in "Decisions leaving the handoff". Convert only after the user has replied to it.
+
+Count the transcript files separately, not as part of the handoff: they are read only on demand.
 
 ## SAVE mode — update an existing doc
 
-If a handoff for this task already exists (check `.claude/handoff-<slug>.md` first; also check the legacy `plans/handoff-<slug>.md` in case the file predates the move to `.claude/`), update it instead of creating a new one. If you find a legacy file in `plans/`, move it to `.claude/` as part of the update so the layout stays consistent:
-- Bump the `Created:` line to `Updated: <new timestamp>` (keep the original Created date on a separate line).
-- Rewrite "Current state" and "Next step" to reflect now, not history. The future session does not need a changelog of how the task evolved — it needs an accurate snapshot of where things stand.
-- Carry forward "Key decisions" entries that still apply; drop ones that have been superseded.
+If a handoff for this task already exists, update it instead of creating a new one. Find it in this order, and do not rely on the slug alone: a session's slug comes from what it worked on, so a session that drifted to new work would otherwise look for a file that does not exist and skip the workstream check below.
+
+1. The handoff this session resumed from, whatever its slug.
+2. `.claude/handoff-<slug>.md`, then the legacy `plans/handoff-<slug>.md` (for files that predate the move to `.claude/`).
+3. If neither exists and `.claude/` holds open handoffs (status not closed), name them and ask whether this save belongs to one of them. The user's answer settles the workstream question below as well, so do not ask it again in the same save.
+
+If you update a legacy file in `plans/`, move it to `.claude/` as part of the update so the layout stays consistent.
+
+### Same workstream, or a new one?
+
+Before updating, compare what this session worked on with the handoff's **Goal**. If the work has clearly moved to a different workstream (a different feature, a different deliverable, a switch from one integration to another), ask:
+
+> This session's work looks like a different workstream from the handoff's goal ("<goal>"). How should I save it?
+> - **Update the existing handoff** — treat it as the same workstream.
+> - **New handoff, close the old one** — the old workstream is finished or abandoned.
+> - **New handoff, keep the old one open (split)** — both workstreams carry on.
+
+Ask only when the difference is clear. A session that went deeper into the same goal, or fixed something along the way, is the same workstream; asking every time turns a save into a quiz.
+
+If the user chooses either kind of new handoff:
+- Write the new file under a new slug, with the line `Previous handoff: <path to the old one>` under its status line. Carry over only what still applies to the new work: open TODOs, recent decisions, linked files.
+- Copy the `## Handoff preferences` block across unchanged. It records how the user likes saves done, which rarely changes with the topic.
+
+Then, for **close the old one**: in the old file, change only the status line, to `**Status:** closed — replaced by <path to the new one> on <YYYY-MM-DD>`, and leave everything else exactly as it was. It is the record of that workstream, and a future session that opens it is sent to the right place. A closed handoff is not updated, so if it sits in the legacy `plans/` folder, leave it there rather than moving it.
+
+For **split**: the old handoff stays open, so update it as normal for whatever this session did on its own workstream, and add the line `Related handoff: <path to the new one>` under its status line. Move any TODOs and decisions that now belong only to the new work out of the old file rather than copying them, so each item lives in one handoff. The two links let a session that opens either file find the other.
+
+### Rewrite, never append
+
+- Set `Updated:` to the new timestamp and keep the original `Created:` date.
+- **Rewrite "Current state", "Next step" and "TODOs" in place** to describe now. Do not add dated layers ("UPDATED <date>", "Session 4 notes", "Arising from the review…") and do not keep superseded text for reference. Each layer seems small when added, and together they are what turns a handoff into a history book that every resume pays for in full.
+- Remove TODOs that are done, merge duplicates, and keep each remaining item under its owner.
+- Carry forward recent decisions that still apply. Do not remove a decision because it looks superseded or settled: propose it in the decision table (see "Decisions leaving the handoff"), usually as log or drop, and let the user choose.
+- If the existing doc predates this template (for example it has a "Key decisions & context" section, or house rules written inline), keep its content and its shape; do not restructure it unasked. The offer to convert it is made once per save, at the size check after the file is saved (see "SAVE mode — size check"), never here during the update, so it can be combined with a size warning into a single offer. The conversion is the user's call.
+- If the user declines converting (they answer at the size check, after the file is saved), add this line to the saved file straight away, as a small follow-up edit, so that a resuming session is not misled by stale dated sections and later saves do not ask again: `> Older layout kept by choice on <YYYY-MM-DD>; do not offer to convert it again. The undated sections are current; where dated sections conflict with them, the undated sections win.` Put it under the status line, after any `Previous handoff:` / `Related handoff:` lines. Add it once; keep it on later saves.
 - **Preserve any `## Handoff preferences` block verbatim.** It is the record of what the user
   already chose for this task, and rewriting or dropping it makes the transcript questions come
   back on the next save. Change it only if the user asks for a different transcript choice this
   time — in which case update the block to match what they just chose.
+
+### Decisions leaving the handoff
+
+**Recent decisions** is for decisions the next steps still depend on. When some look settled, you may point them out and offer to move them out. For each one, the user chooses:
+
+- **keep** it in the handoff;
+- **log** it in the decision log only (format and location rules in `references/decision-log.md`, next to this file);
+- **document** it in a project document, with or without a log entry;
+- **memory** — save it to the assistant's persistent memory;
+- **drop** it without saving it anywhere.
+
+All five are legitimate, and none is a precondition for another. **Never remove a decision on your own judgement**, and never create a decision log the user has not chosen. Making the offer is enough. Respect the choice, including "drop it": the user knows which decisions are already obvious from the code, and which ones they will never revisit.
+
+**Make the offer as one table, not one question per decision.** Propose a choice for every decision, with a short reason, and let the user approve the lot or amend individual rows in a single reply. A row may propose two choices that go together, such as "document + log":
+
+| # | Decision | Proposed | Why |
+|---|---|---|---|
+| 1 | Retry failed uploads three times, then alert | document + log | Settled behaviour; it replaced the earlier no-retry rule |
+| 2 | Use the v2 client, not v1 | drop | Obvious from the code now that v1 is removed |
+| 3 | Defer the cache until load tests run | keep | The next step still depends on it |
+
+> Reply "approve" to apply these, or name the rows to change (for example "2: keep").
+
+Asking one by one costs a turn per decision, and a question tool that fits only a few options cannot show all five choices anyway. Apply nothing until the user has replied.
 
 ## Quality checks before finishing
 
 Before declaring done, re-read the doc with this question: *if I handed this to a colleague who had never seen this codebase, could they pick up the next step?* If the answer is no, fix it. Common gaps:
 - Vague goal ("fix the bug" — which bug?)
 - Missing file paths
-- **Ambiguous file paths** — every path should be locatable from the doc alone. Bare `.claude/handoff-foo.md` or `src/foo.ts` is fine for project files; user-level Claude files must be written as `~/.claude/skills/foo/SKILL.md`; absolute paths must be fully spelled out. The collision between project `.claude/` and user `~/.claude/` is the trap to watch for — never write a bare `.claude/...` when you mean the user-level folder. The first mention of any non-project path should carry a brief parenthetical explaining where it lives. Watch especially for items in **Pending TODOs** that imply a commit — a user-level path silently can't be part of a project commit.
+- **Ambiguous file paths** — every path should be locatable from the doc alone. Bare `.claude/handoff-foo.md` or `src/foo.ts` is fine for project files; user-level Claude files must be written as `~/.claude/skills/foo/SKILL.md`; absolute paths must be fully spelled out. The collision between project `.claude/` and user `~/.claude/` is the trap to watch for — never write a bare `.claude/...` when you mean the user-level folder. The first mention of any non-project path should carry a brief parenthetical explaining where it lives. Watch especially for items in **TODOs** that imply a commit — a user-level path silently can't be part of a project commit.
+- Links into a session scratchpad or temp folder — copy the file somewhere durable and link that
 - "Next step" that assumes context from the conversation
 - TODOs phrased as reminders to self instead of actionable items
+- History that crept in: dated "updated" layers, superseded text kept for reference, the same TODO listed twice, done TODOs still present, more than one transcript section
 
 ## What NOT to include
 
 - Full conversation transcripts or running commentary inlined into the handoff body — the doc is a snapshot, not a log. (Saving the transcript as a *separate* referenced file under `.claude/` is fine and is covered by "SAVE mode — optionally save the full session transcript" above.)
+- How the task got here: completed work, dated progress notes, or decisions already superseded. Git, the documents and the decision log hold those.
+- Copies of the house rules or of a document's content — link to them instead.
+- Emoji and decorative formatting.
 - Information already in the project's AI-instructions file (`CLAUDE.md` and/or `.github/copilot-instructions.md`), README, or obvious from the code — link/reference instead.
 - User preferences or durable facts — those belong in the assistant's persistent memory.
 - Secrets, tokens, or credentials — even if they came up in the session.

@@ -22,14 +22,16 @@ yesterday — and the agent confidently redoes work you had already finished.
 Two modes, chosen from how you phrase the request.
 
 **SAVE** — writes a self-contained snapshot to `.claude/handoff-<slug>.md`:
-the goal, what is done so far with exact file paths and line numbers, the single
-next concrete action, pending TODOs, the non-obvious decisions that are not visible
-in the code or git log, and open blockers.
+the goal, where things stand with exact file paths and line numbers, the single
+next concrete action, one-line TODOs grouped by owner, recent decisions the next
+step depends on, and open blockers. Standing working rules and an optional decision
+log live in their own files, which the handoff links rather than copies.
 
 Say any of: *"save the session"*, *"I'm about to /clear"*, *"compact is coming"*,
 *"checkpoint this work"*, *"update the handoff"*.
 
-**RESUME** — finds the handoff, reads it in full, checks `git status` and
+**RESUME** — finds the handoff, reads it and any linked house-rules file in full
+(the decision log and transcripts only when a question needs them), checks `git status` and
 `git log -5` against the branch the handoff recorded, echoes back a short summary,
 and then **stops and waits**.
 
@@ -41,7 +43,23 @@ hook in this repo watches how full the context window is and, once it passes a
 threshold you set, has the agent offer you a SAVE — which is the moment the offer is
 worth something and the moment you are least likely to think of it yourself.
 
-## Two design choices worth knowing
+## Design choices worth knowing
+
+**A handoff stays a snapshot of now.** Every resume reads the whole file, so every
+line of history in it is paid for again by every future session. A handoff that is
+appended to across weeks of saves can pass a hundred kilobytes and cost more than
+100K tokens before any work starts. So a save rewrites the state sections in place
+instead of adding dated layers, removes finished TODOs, and keeps one transcript
+reference rather than one per save. When the work moves to a different workstream,
+the skill asks whether to update the handoff, start a new one and close the old, or
+split into two open handoffs linked to each other. Over 100 KB, it warns you and
+offers to trim; it never trims on its own.
+
+**What leaves the handoff is your call.** When decisions look settled, the skill
+proposes, in one table, where each should go: stay in the handoff, the decision log,
+a project document, persistent memory, or nowhere. Nothing moves until you approve
+or amend the table. It never creates a decision log you did not ask for, and never
+writes to the project's `CLAUDE.md` without your confirmation of the exact rule.
 
 **Resume does not auto-start the work.** The handoff was true when it was written.
 You may have already done part of it, changed your mind, or want a different angle.
@@ -109,7 +127,9 @@ Two Claude Code specifics are worth knowing if you run this elsewhere:
 
 [`SKILL.md`](SKILL.md) is what the agent actually executes: the handoff template,
 the transcript flow step by step, and the checks it runs against its own output
-before calling the job done.
+before calling the job done. [`references/decision-log.md`](references/decision-log.md)
+defines the decision-log format, kept in one place so any skill that writes a log
+can share it.
 
 Read it before you rely on it. This skill writes files into your repository and,
 if you turn archiving on, copies your session history into it as well — decide for
