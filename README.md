@@ -55,7 +55,7 @@ say in its own section how far it reaches; the answer is not the same for all of
 | [`session-handoff`](skills/session-handoff/) | skill | Any agent · any OS |
 | [`smart-commit`](skills/smart-commit/) | skill | Any agent · any OS |
 | [`ctx-watch`](hooks/) | hook | Claude Code, plugin install only · Windows |
-| [session chaining](docs/session-chaining.md) | skill + hook | Claude Code, plugin install only · Windows |
+| [`session-chaining`](docs/session-chaining.md) | skill + hook | Claude Code, plugin install only · Windows |
 
 The **Works with** column applies the rule above per item, and shows why the two
 limits on a hook need stating separately. `ctx-watch` is Claude-Code-only because it
@@ -82,9 +82,10 @@ What each one does:
   it passes a threshold you set, has the agent offer you a handoff. Fills a gap in
   the VS Code extension, which has no custom status line and hides its own indicator
   until 50%.
-- **[session chaining](docs/session-chaining.md)** — `ctx-watch` and `session-handoff`
-  together: at the switch point the agent saves the handoff and opens the next session,
-  which picks the task up and carries on, until a generation limit ends the chain.
+- **`session-chaining`** — `ctx-watch` and `session-handoff` together, described in
+  [`docs/session-chaining.md`](docs/session-chaining.md). At the switch point the agent
+  saves the handoff and opens the next session, which picks the task up and carries
+  on, until a generation limit ends the chain.
 
 ## Installing
 
