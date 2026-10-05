@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Save or resume from a structured task-state snapshot under the project's .claude/ folder so work can carry across cleared/compacted Claude Code or GitHub Copilot sessions. Has two modes. SAVE mode — use when the user says "save the session", "save context", "create a handoff", "I need to /clear", "compact is coming", "snapshot this task", "checkpoint this work", "update the handoff", "refresh the snapshot". RESUME mode — use when the user says "resume from the handoff", "pick up where we left off", "continue from .claude/handoff-...", "read the handoff and continue", "load the handoff", or opens a fresh session pointing at a `.claude/handoff-*.md` file. Optionally archives the full session transcript (Claude Code or GitHub Copilot chat) as a readable Markdown or raw JSONL file alongside the handoff. Do NOT use this for general memory/preferences (use persistent memory) or recurring scheduled work (use a scheduled-task mechanism).
+description: Save or resume from a structured task-state snapshot under the project's .claude/ folder so work can carry across cleared/compacted Claude Code or GitHub Copilot sessions. Has two modes. SAVE mode — use when the user says "save the session", "save context", "create a handoff", "I need to /clear", "compact is coming", "snapshot this task", "checkpoint this work", "update the handoff", "refresh the snapshot", "save and open a new session" (it can launch the next session for them). RESUME mode — use when the user says "resume from the handoff", "pick up where we left off", "continue from .claude/handoff-...", "read the handoff and continue", "load the handoff", or opens a fresh session pointing at a `.claude/handoff-*.md` file. Optionally archives the full session transcript (Claude Code or GitHub Copilot chat) as a readable Markdown or raw JSONL file alongside the handoff. Do NOT use this for general memory/preferences (use persistent memory) or recurring scheduled work (use a scheduled-task mechanism).
 ---
 
 # session-handoff
@@ -22,6 +22,7 @@ This skill has two modes. Decide which one applies from the user's phrasing befo
 - "I'm about to /clear" / "compact is going to hit" / "context is filling up"
 - "checkpoint this work" / "I'll resume tomorrow" / "create a handoff"
 - "update the handoff" / "refresh the snapshot" (update an existing doc)
+- "save and open a new session" / "hand this over to a new session" (save, then launch the next session; see `references/session-chaining.md` → "Opening the next session when chaining is off")
 - a ctx-watch block ("[ctx-watch] Context usage is …") in a session whose house rules turn chaining on (see `references/session-chaining.md`)
 
 **RESUME mode** — load an existing handoff doc and prepare to continue. Trigger when the user signals they want to pick up prior work:
@@ -75,6 +76,7 @@ Use this template:
 **Created:** <YYYY-MM-DD HH:MM> · **Updated:** <YYYY-MM-DD HH:MM> · **Branch:** <git branch> · **Status:** <in-progress | blocked | ready-for-review>
 Previous handoff: <path>  ← only when this one replaced or split from another handoff; otherwise omit the line
 Related handoff: <path>  ← only when another open handoff split from this one; otherwise omit the line
+Handover: next session launched <YYYY-MM-DD HH:MM>  ← only when this session launched the next one (references/session-chaining.md); the next save removes it
 
 ## Goal
 <1–3 sentences. What is the user trying to accomplish? Why does it matter? Be concrete enough that someone with no context understands the objective.>
@@ -127,6 +129,17 @@ End your reply to the user with a single line:
 
 That line is the user's copy-paste prompt for the fresh session.
 
+After it, unless the save is part of a chain, offer to open that session for the user, or open it
+when their preferences say `always`; `references/session-chaining.md` → "Opening the next session
+when chaining is off" has the wording and the launch. Saving them the copy-paste is the point, so
+the offer is one sentence, not a question.
+
+**When this save opens the next session**, by the user's choice or their `always` preference, and
+the launch succeeds, the reply is the reference's single hand-over line instead of all of the above:
+no "To resume…" line, no summary of the save. The new session is already reading the handoff, so a
+copy-paste prompt would invite a second session on the same task. If the launch fails, keep the
+"To resume…" line: the user now starts the next session by hand.
+
 ## RESUME mode — load and wait
 
 When the user wants to pick up prior work, do NOT immediately start coding. The point of the handoff is shared situational awareness — confirm both sides have it before acting.
@@ -148,7 +161,7 @@ If `git status` shows uncommitted changes the handoff did not mention, flag them
 
 ## Session chaining and the ctx-watch block
 
-A `[ctx-watch] Context usage is …` block at the end of a turn, or a resume in a project that chains, is handled per `references/session-chaining.md`: it says when to save and launch the next session, when only to offer a handoff, and when to continue rather than wait. A chain save is an ordinary SAVE with every question answered in advance from the handoff's preferences block, so it never stops to ask.
+A `[ctx-watch] Context usage is …` block at the end of a turn, or a resume in a project that chains, is handled per `references/session-chaining.md`: it says when to save and launch the next session, when to offer a handoff instead (with the choice of opening the next session), and when to continue rather than wait. A chain save is an ordinary SAVE with every question answered in advance from the handoff's preferences block, so it never stops to ask.
 
 ## SAVE mode — optionally save the full session transcript
 
@@ -377,6 +390,10 @@ A future SAVE for this task should honour these and **skip the transcript questi
 If the answer ever changes, edit this block — it is the source of truth for this task.
 ```
 
+The block may also hold `- **Open the next session:** <ask | always | never>` and
+`- **Chaining:** off`, defined in `references/session-chaining.md`. Add either only when the user
+states that choice; never ask for them as part of the transcript questions.
+
 Write it even when the user declined a transcript: "no" is just as much an answer worth not
 re-asking. In that case write the block, skip the transcript section, and go to Step 7.
 
@@ -399,7 +416,7 @@ The "reference only" framing matters. Without it, a resuming session may try to 
 
 ### Step 7 — finish
 
-Run the size check (next section), then print the standard "To resume…" line as before. The user now has both the handoff (primary) and the transcript (fallback) saved together.
+Run the size check (next section), then print the standard "To resume…" line as before, followed by the offer to open the next session (see "SAVE mode — what to write", after the "To resume…" line). The user now has both the handoff (primary) and the transcript (fallback) saved together. If this save opens the next session, end with the one hand-over line instead (same section).
 
 ## SAVE mode — size check
 
@@ -460,14 +477,16 @@ For **split**: the old handoff stays open, so update it as normal for whatever t
 - Set `Updated:` to the new timestamp and keep the original `Created:` date.
 - **Rewrite "Current state", "Next step" and "TODOs" in place** to describe now. Do not add dated layers ("UPDATED <date>", "Session 4 notes", "Arising from the review…") and do not keep superseded text for reference. Each layer seems small when added, and together they are what turns a handoff into a history book that every resume pays for in full.
 - Remove TODOs that are done, merge duplicates, and keep each remaining item under its owner.
+- Remove any `Handover:` line under the status line: it described the previous hand-over, and this save is newer. (A launch from this save writes a fresh one.)
 - Carry forward recent decisions that still apply. Do not remove a decision because it looks superseded or settled: propose it in the decision table (see "Decisions leaving the handoff"), usually as log or drop, and let the user choose.
 - Keep every line under **Corrections** while the workstream is open, and add a line for any correction made this session. Do not offer them for removal or move them into a document: being documented is not enough for these (see "Corrections stay until the workstream closes").
 - If the existing doc predates this template (for example it has a "Key decisions & context" section, or house rules written inline), keep its content and its shape; do not restructure it unasked. The offer to convert it is made once per save, at the size check after the file is saved (see "SAVE mode — size check"), never here during the update, so it can be combined with a size warning into a single offer. The conversion is the user's call.
 - If the user declines converting (they answer at the size check, after the file is saved), add this line to the saved file straight away, as a small follow-up edit, so that a resuming session is not misled by stale dated sections and later saves do not ask again: `> Older layout kept by choice on <YYYY-MM-DD>; do not offer to convert it again. The undated sections are current; where dated sections conflict with them, the undated sections win.` Put it under the status line, after any `Previous handoff:` / `Related handoff:` lines. Add it once; keep it on later saves.
 - **Preserve any `## Handoff preferences` block verbatim.** It is the record of what the user
   already chose for this task, and rewriting or dropping it makes the transcript questions come
-  back on the next save. Change it only if the user asks for a different transcript choice this
-  time — in which case update the block to match what they just chose.
+  back on the next save. Change it only if the user asks for a different choice this time (a
+  transcript choice, or whether to open the next session) — in which case update the block to
+  match what they just chose.
 
 ### Decisions leaving the handoff
 

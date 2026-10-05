@@ -11,6 +11,7 @@ the one place that describes it; the two READMEs cover their own components and 
 ## Contents
 
 - [What it does](#what-it-does)
+  - [Opening the next session without chaining](#opening-the-next-session-without-chaining)
 - [How a hand-over happens](#how-a-hand-over-happens)
 - [Requirements](#requirements)
 - [Setup checklist](#setup-checklist)
@@ -28,11 +29,25 @@ house rules. What happens next depends on one line in those rules:
 - **Chaining on:** the agent saves the handoff without asking anything, opens the next session, and
   stops. The new session resumes from the handoff and continues the work without waiting for
   confirmation.
-- **Chaining off:** the agent offers you a handoff, in a sentence or as a question with choices,
-  and saves nothing until you answer.
+- **Chaining off:** the agent asks what you want, with three choices: save the handoff, save it
+  and open a new session, or keep going. It saves nothing until you answer.
 
 A chain is a series of sessions, each one a *generation*. A limit on the number of generations is
 the backstop that ends it.
+
+### Opening the next session without chaining
+
+With chaining off, the agent can still open the next session for you, so you do not have to start
+it and paste the resume line by hand. Pick "save and open a new session" at the switch point, or
+take up the one-sentence offer at the end of any handoff save. The new session reads the handoff
+and waits for your instructions; the old one notes the hand-over in the handoff
+(`Handover: next session launched <time>`) and stops working on the task. This works without
+`ctx-watch` too, from a save you ask for yourself.
+
+To make it automatic, or to stop the offer, add one line to the handoff's
+`## Handoff preferences` block: `- **Open the next session:** always`, or `never`. The launch is the
+same as a chain's, so the [requirements](#requirements) and the
+[one-time dialogs](#once-per-machine) below apply to it as well.
 
 ## How a hand-over happens
 
@@ -143,10 +158,11 @@ dialogs appear only the first time, and each needs answering once:
 ## Caveats
 
 - **Auto mode can refuse the launch.** Its safety check may occasionally decline the command that
-  starts the next session. None of the test runs saw this. If it happens, the chain line records
-  `launch failed`, the old session reports the command, and the chain pauses until you run it.
-- **Moving a chained session into the VS Code panel.** A chained session opens in a terminal. To
-  continue it in the VS Code panel, close its terminal tab, run **Developer: Reload Window**, and
+  starts the next session. None of the test runs saw this. If it happens, the handoff records
+  `launch failed` (on the chain line, or the `Handover:` line), the old session reports the command,
+  and nothing continues until you run it.
+- **Moving a launched session into the VS Code panel.** A session the agent opens runs in a
+  terminal. To continue it in the VS Code panel, close its terminal tab, run **Developer: Reload Window**, and
   open the session from the session list.
 
 ## Tested so far

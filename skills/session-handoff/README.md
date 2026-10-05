@@ -29,7 +29,9 @@ the next session does not repeat the mistake), and open blockers. Standing worki
 log live in their own files, which the handoff links rather than copies.
 
 Say any of: *"save the session"*, *"I'm about to /clear"*, *"compact is coming"*,
-*"checkpoint this work"*, *"update the handoff"*.
+*"checkpoint this work"*, *"update the handoff"*. On Windows it can also open the next
+session for you, so you need not start it and paste the resume line yourself; see
+[`docs/session-chaining.md`](../../docs/session-chaining.md#opening-the-next-session-without-chaining).
 
 **RESUME** — finds the handoff, reads it and any linked house-rules file in full
 (the decision log and transcripts only when a question needs them), finishes reading any
