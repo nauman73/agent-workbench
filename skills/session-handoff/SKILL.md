@@ -22,6 +22,7 @@ This skill has two modes. Decide which one applies from the user's phrasing befo
 - "I'm about to /clear" / "compact is going to hit" / "context is filling up"
 - "checkpoint this work" / "I'll resume tomorrow" / "create a handoff"
 - "update the handoff" / "refresh the snapshot" (update an existing doc)
+- a ctx-watch block ("[ctx-watch] Context usage is …") in a session whose house rules turn chaining on (see `references/session-chaining.md`)
 
 **RESUME mode** — load an existing handoff doc and prepare to continue. Trigger when the user signals they want to pick up prior work:
 - "resume from the handoff" / "pick up where we left off"
@@ -133,11 +134,15 @@ Steps, in order:
    **Leave the other linked files unread for now.** The decision log and any saved transcripts are listed in the handoff so they can be found, not so they are loaded on every resume; they are also the files that grow large. Read the decision log when a question turns on why something was decided, and a transcript only when the handoff cannot answer a specific question.
 3. **Verify the working state matches.** Run `git status` and `git log -5 --oneline`. Compare against the "Branch" line in the handoff. If they don't match (different branch, missing modified files, advanced commits), surface the discrepancy to the user before proceeding — do not silently reconcile.
 4. **Echo back a tight summary** to the user: 2–4 lines covering the goal, the next step from the doc, and any open question or blocker. This proves you read it and gives the user a chance to correct stale info.
-5. **Stop and wait for explicit instruction.** Do not begin "Next step" automatically. End with something like *"Ready to continue from `<next-step>` — say the word and I'll start, or tell me to do something else."*
+5. **Stop and wait for explicit instruction, unless the task chains.** If chaining is on for this task (see `references/session-chaining.md` → "The chain setting"), continue from "Next step" without waiting, as that file's "Continuing resume" describes. Otherwise do not begin "Next step" automatically. End with something like *"Ready to continue from `<next-step>` — say the word and I'll start, or tell me to do something else."*
 
-Why wait: the handoff was written at one point in time. Things may have changed externally (the user may have already done part of the work, decided to abandon the task, or want to take a different angle). Auto-executing the next step risks redoing work or going in the wrong direction. The cost of one short confirmation turn is much lower than the cost of unwanted edits.
+Why wait (when not chaining): the handoff was written at one point in time. Things may have changed externally (the user may have already done part of the work, decided to abandon the task, or want to take a different angle). Auto-executing the next step risks redoing work or going in the wrong direction. The cost of one short confirmation turn is much lower than the cost of unwanted edits.
 
 If `git status` shows uncommitted changes the handoff did not mention, flag them — they may be the user's in-progress work from another session and must not be overwritten.
+
+## Session chaining and the ctx-watch block
+
+A `[ctx-watch] Context usage is …` block at the end of a turn, or a resume in a project that chains, is handled per `references/session-chaining.md`: it says when to save and launch the next session, when only to offer a handoff, and when to continue rather than wait. A chain save is an ordinary SAVE with every question answered in advance from the handoff's preferences block, so it never stops to ask.
 
 ## SAVE mode — optionally save the full session transcript
 

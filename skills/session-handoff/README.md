@@ -76,6 +76,11 @@ out in full. This matters most in TODOs that imply a commit: a user-level file
 cannot be part of a project commit, and the skill calls that out explicitly instead
 of letting a future session discover it the hard way.
 
+**Used with `ctx-watch`, the skill can chain sessions.** At the switch point it saves the
+handoff, opens the next session and stops, and that session resumes and carries on without
+waiting for confirmation; [`docs/session-chaining.md`](../../docs/session-chaining.md) covers
+setup, requirements and limits.
+
 ## Optional: archive the full transcript
 
 A handoff is a snapshot, so it drops the running narrative on purpose. Occasionally

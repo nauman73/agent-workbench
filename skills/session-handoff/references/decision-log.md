@@ -26,8 +26,10 @@ dropped. Never create a log, or move a decision into one, without the user choos
 The location is not fixed. Before creating a log, look for an existing one, in this order:
 
 1. the path recorded under **Linked files** in the handoff;
-2. a `decision-log.md` anywhere in the project, skipping dependency and build folders
-   (for example `plans/<feature>/decision-log.md`, a convention some workflows use).
+2. a `decision-log.md` anywhere in the project whose first heading starts `# Decision log —`,
+   skipping dependency and build folders and any `references/` folder inside a skill (that is
+   where this format definition lives, and it is not a log). For example
+   `plans/<feature>/decision-log.md`, a convention some workflows use.
 
 If the handoff links one, use it. If the search finds one that may belong to different work (it sits in another feature's folder, or its title names other work), ask whether to use it or start a new one rather than writing this work's decisions into it. If several are found and the handoff does not say which applies, ask.
 
