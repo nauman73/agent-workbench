@@ -116,6 +116,14 @@ function Get-TranscriptFacts {
                 }
             } catch { }
         }
+        # A queued message is a new prompt for the note, which must not repeat
+        # for it. Stop never passes this: a queued message is always mid-turn.
+        if ($idxUser -lt 0 -and $QueuedIsTurnStart -and $ln -like '*"queued_command"*') {
+            try {
+                $a = ($ln | ConvertFrom-Json).attachment
+                if ($a.type -eq 'queued_command') { $idxUser = $i }
+            } catch { }
+        }
         if ($null -eq $attTotal -and $ln -like '*"token_usage"*') {
             try {
                 $a = ($ln | ConvertFrom-Json).attachment
@@ -145,6 +153,11 @@ function Get-TranscriptFacts {
     return @{ used = $used; attTotal = $attTotal; modelId = $modelId; prevUsed = $prevUsed }
 }
 
+function Get-Band {
+    param([int]$P, [int]$SwitchPoint, [int]$Step)
+    return $SwitchPoint + [math]::Floor(($P - $SwitchPoint) / $Step) * $Step
+}
+
 try {
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
@@ -165,6 +178,8 @@ try {
         stepBelow   = 5
         stepWithin  = 1
         bandLabel   = [char]0x2014 + ' switch point'
+        block       = $false
+        blockStep   = 5
     }
     $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR }
             else { Join-Path $HOME '.claude' }
@@ -181,6 +196,8 @@ try {
         CTX_WATCH_STEPBELOW   = 'stepBelow'
         CTX_WATCH_STEPWITHIN  = 'stepWithin'
         CTX_WATCH_BANDLABEL   = 'bandLabel'
+        CTX_WATCH_BLOCK       = 'block'
+        CTX_WATCH_BLOCKSTEP   = 'blockStep'
     }.GetEnumerator()) {
         $v = [Environment]::GetEnvironmentVariable($kv.Key)
         if (-not [string]::IsNullOrWhiteSpace($v)) { $cfg[$kv.Value] = $v }
@@ -192,13 +209,16 @@ try {
     $switchPoint = [int]$cfg.switchPoint
     $stepBelow   = [int]$cfg.stepBelow
     $stepWithin  = [int]$cfg.stepWithin
+    $blockStep = 5
+    if (-not [int]::TryParse("$($cfg.blockStep)", [ref]$blockStep) -or $blockStep -lt 1) { $blockStep = 5 }
 
     # ---- transcript facts: 256 KB tail, widened once to 2 MB ---------------
     $tail  = Read-TranscriptTail $tp 262144
-    $facts = Get-TranscriptFacts $tail.Lines
+    $queued = ($hookEvent -eq 'UserPromptSubmit')
+    $facts = Get-TranscriptFacts $tail.Lines -QueuedIsTurnStart:$queued
     if ($tail.Truncated -and ($null -eq $facts.used -or $null -eq $facts.prevUsed -or $null -eq $facts.attTotal)) {
         $tail  = Read-TranscriptTail $tp 2097152
-        $facts = Get-TranscriptFacts $tail.Lines
+        $facts = Get-TranscriptFacts $tail.Lines -QueuedIsTurnStart:$queued
     }
     if ($null -eq $facts.used) { exit 0 }
     $used     = $facts.used
@@ -237,6 +257,31 @@ try {
     if ($null -ne $prevUsed) { $prevPct = [math]::Floor($prevUsed * 100 / $window) }
 
     if ($hookEvent -eq 'Stop') {
+        $mark = ''
+        if (-not $exact) { $mark = ' ~' }
+        $msg = "ctx $pct% ($usedK/$winK" + "k$mark)"
+        if ($pct -ge $switchPoint -and $cfg.bandLabel) { $msg = $msg + ' ' + $cfg.bandLabel }
+
+        # Block once per band at or above the switch point. stop_hook_active is
+        # compared with $true: absent must mean "not yet asked". Background work
+        # does not hold the block back; the reason says to wait for it first.
+        $block = (ConvertTo-Bool $cfg.block) -and $pct -ge $switchPoint -and
+                 ($in.stop_hook_active -ne $true)
+        if ($block -and $null -ne $prevPct -and $prevPct -ge $switchPoint) {
+            $block = (Get-Band $pct $switchPoint $blockStep) -gt (Get-Band $prevPct $switchPoint $blockStep)
+        }
+        if ($block) {
+            $reason = "[ctx-watch] Context usage is $pct% ($usedK" + "k/$winK" + "k), past the switch point " +
+                "of $switchPoint% set in ctx-watch.json. Act according to the project's house rules: if this " +
+                "is a chain session, save the handoff with the session-handoff skill and start the next " +
+                "session; otherwise offer the user a handoff. Do this once the current step is complete, " +
+                "including any background work it started: if that work is still running, end this turn to " +
+                "wait for it, and act when its result has been handled; otherwise act before you end this " +
+                "turn. If you have already handed this session over, stop."
+            Write-Output (@{ decision = 'block'; reason = $reason; systemMessage = $msg } | ConvertTo-Json -Compress)
+            exit 0
+        }
+
         $step   = if ($pct -ge $switchPoint) { $stepWithin } else { $stepBelow }
         $bucket = [math]::Floor($pct / $step) * $step
         $show   = $true
@@ -247,17 +292,13 @@ try {
             $show    = ($bucket -ne $pBucket)
         }
         if (-not $show) { exit 0 }
-
-        $mark = ''
-        if (-not $exact) { $mark = ' ~' }
-        $msg = "ctx $pct% ($usedK/$winK" + "k$mark)"
-        if ($pct -ge $switchPoint -and $cfg.bandLabel) { $msg = $msg + ' ' + $cfg.bandLabel }
         Write-Output (@{ systemMessage = $msg } | ConvertTo-Json -Compress)
         exit 0
     }
 
     # UserPromptSubmit: suggest a handoff on crossing, and re-arm below.
     if (-not (ConvertTo-Bool $cfg.warn)) { exit 0 }
+    if (ConvertTo-Bool $cfg.block) { exit 0 }   # the Stop block replaces the note
     if ($pct -lt $switchPoint) { exit 0 }
     if ($null -ne $prevPct -and $prevPct -ge $switchPoint) { exit 0 }
 

@@ -46,6 +46,11 @@ What the model receives is a request to mention the switch point in one sentence
 [`session-handoff`](../skills/session-handoff/) skill, phrased as something you are free to decline.
 It is not an instruction to save anything.
 
+With `block` on (off by default), the `Stop` hook also ends the turn once per band at or above the
+switch point, telling the model to act on the project's house rules, and the `UserPromptSubmit`
+suggestion is switched off. It exists for session chaining, described in
+[`docs/session-chaining.md`](../docs/session-chaining.md).
+
 ## Configuration
 
 `ctx-watch.json`, resolved in this order — later layers override earlier ones, and any key may be
@@ -67,6 +72,11 @@ defaults baked into the script          works with no config file at all
 | `enabled` | `CTX_WATCH_ENABLED` | `true` | `false` silences both |
 | `window` | `CTX_WATCH_WINDOW` | unset | force the denominator; skips the whole resolution ladder |
 | `bandLabel` | `CTX_WATCH_BANDLABEL` | `— switch point` | appended to the readout at or above the switch point |
+| `block` | `CTX_WATCH_BLOCK` | `false` | `true` makes the `Stop` hook block once per band at or above the switch point |
+| `blockStep` | `CTX_WATCH_BLOCKSTEP` | `5` | band width for blocking, counted from the switch point |
+
+`enabled: false` silences the block too. `switchPoint` is read as a whole number, rounded (`8.5`
+becomes 8); a `blockStep` that is not a whole number of at least 1 falls back to 5.
 
 A minimal file:
 
@@ -90,6 +100,10 @@ setting — hence the rename.
 `cache_creation_input_tokens` from the most recent `usage` record in the transcript tail. Checked
 against Claude Code's own figure twice: 249,035 against 248,931, and 109,807 against 109,670 — both
 inside 0.04%.
+
+**The tail** is the last 256 KB of the transcript, read as bytes. When that is not enough — no
+`usage` record, no turn start with an earlier one, or no `token_usage` attachment — the hook widens
+the read once, to 2 MB.
 
 **The denominator** is a ladder. First hit wins:
 
@@ -156,6 +170,10 @@ When "previous" cannot be determined — a resumed session, a short tail, a comp
 **prints anyway**. One redundant suggestion is a far better failure than being blind at exactly the
 moment the context moved sharply.
 
+The block keeps no state either. Claude Code's `stop_hook_active` flag says whether this turn has
+already been blocked, and the band arithmetic — the band now against the band at the previous turn
+— says whether this turn entered a new one. Together they replace a "did I already ask" file.
+
 ## Safety
 
 **The stdout rule is the whole of it.** On `UserPromptSubmit`, *any* stdout is injected into the
@@ -170,8 +188,21 @@ directly, and it was confirmed incidentally when a malformed payload produced a 
 and nothing at all on stdout.
 
 Beyond that: the hook reads the transcript and the config files, and writes no files anywhere. It
-exits 0 unconditionally, so it can never surface as a hook failure — an advisory readout has no
-business blocking a turn.
+exits 0 unconditionally, so it can never surface as a hook failure.
+
+The block is the one place the hook acts on a turn, and it is guarded:
+
+- **Opt-in.** Nothing blocks unless `block` is `true`.
+- **At most once per turn.** When `stop_hook_active` is true the turn has already been blocked, and
+  the hook prints the readout only. The flag is compared with `true` exactly, so an absent flag
+  never disables the block.
+- **A notice, not an interruption.** The block fires even while background work runs, and its
+  reason tells the model to finish the current step, that work included, before acting.
+- **Nothing else on stdout.** The block is one JSON object and is the only stdout on that path.
+  Every failure path still exits 0 with empty stdout.
+
+Claude Code shows the block's reason labelled `Stop hook error:`. That label is its own wording for
+any `Stop` block; the hook has not failed.
 
 ## Requirements and portability
 
@@ -270,7 +301,7 @@ LF-only file. [`.gitattributes`](../.gitattributes) pins this; do not "fix" it t
 live copy, run the tests there, then publish:
 
 ```powershell
-& "$HOME/.claude/hooks/test-ctx-watch.ps1"   # 37 tests
+& "$HOME/.claude/hooks/test-ctx-watch.ps1"   # 82 tests
 ./tools/sync-hook.ps1 -Check                 # drift, without writing
 ./tools/sync-hook.ps1                        # publish into hooks/
 ```
@@ -291,7 +322,8 @@ tests the live script and running the repo copy tests the repo script. `hooks.js
 
 The test suite covers all six ladder rungs, the `~` marker, stepping above and below the band, the
 real-user versus tool-result distinction, the crossing test including re-arming, all four config
-layers, and every failure path exiting silently with empty stdout. It passes on Windows and, under
-`pwsh`, on Linux. The launcher is not part of the suite; it has been driven by hand through
+layers, the tail read and its widening, the block's bands and guards, and every failure path
+exiting silently with empty stdout. It passes on Windows; under `pwsh` on Linux it was last run
+before the block was added. The launcher is not part of the suite; it has been driven by hand through
 `cmd.exe`, through `sh` with `OS=Windows_NT` (the Git Bash path), and through `sh` with `OS` unset
 (the path every other POSIX host takes), reaching PowerShell and printing the same readout each way.

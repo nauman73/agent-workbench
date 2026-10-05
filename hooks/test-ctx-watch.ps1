@@ -80,17 +80,27 @@ function New-Transcript {
 }
 
 function Invoke-Hook {
-    param([string]$Event, [string]$Transcript, [string]$Cwd = $tmp)
+    param([string]$Event, [string]$Transcript, [string]$Cwd = $tmp, [hashtable]$Extra = @{})
     $payload = @{
         hook_event_name = $Event
         transcript_path = $Transcript
         session_id      = 'test-session'
         cwd             = $Cwd
-    } | ConvertTo-Json -Compress
-    $out = $payload | & $psExe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
+    }
+    foreach ($k in $Extra.Keys) { $payload[$k] = $Extra[$k] }
+    $json = $payload | ConvertTo-Json -Compress -Depth 6
+    $out = $json | & $psExe -NoProfile -ExecutionPolicy Bypass -File $script 2>$null
     if ($null -eq $out) { return '' }
     return ($out -join "`n").Trim()
 }
+function Get-Decision {
+    param([string]$Json)
+    if ([string]::IsNullOrWhiteSpace($Json)) { return '' }
+    try { $o = $Json | ConvertFrom-Json; if ($o.decision) { return [string]$o.decision } else { return '' } }
+    catch { return "<not json: $Json>" }
+}
+# Shape as recorded by Claude Code 2.1.289 when a queued message is delivered mid-turn.
+function New-Queued { (@{ type = 'attachment'; attachment = @{ type = 'queued_command'; prompt = 'more'; commandMode = 'prompt' } } | ConvertTo-Json -Compress -Depth 10) }
 function Get-SysMsg {
     param([string]$Json)
     if ([string]::IsNullOrWhiteSpace($Json)) { return '' }
@@ -305,6 +315,92 @@ $t = New-Transcript -Name 'locked' -PrevUsed 200000 -CurrUsed 260000 -Prefix @(N
 $h = [System.IO.File]::Open($t, 'Open', 'ReadWrite', 'ReadWrite')
 try { $s = Invoke-Hook 'Stop' $t } finally { $h.Dispose() }
 Assert-Eq 'reads a transcript another handle holds open for writing' 'ctx 26% (260/1000k)' (Remove-Band (Get-SysMsg $s))
+
+Write-Host "`n=== 11. Stop block ===" -ForegroundColor Cyan
+function T { param($n, $prev, $curr, [switch]$NoUser, [string[]]$Mid = @())
+    $p = Join-Path $tmp "$n.jsonl"
+    $l = @((New-AttTokenUsage 1000000))
+    if ($prev -gt 0) { $l += New-Usage $prev }
+    if (-not $NoUser) { $l += New-RealUser }
+    $l += $Mid; $l += New-ToolResult; $l += New-Usage $curr
+    Set-Content -LiteralPath $p -Value $l -Encoding UTF8; return $p }
+
+Assert-Eq 'block off by default - no decision at the crossing' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-off' 240000 260000)))
+
+$env:CTX_WATCH_BLOCK = 'true'
+Assert-Eq 'below the switch point - no block' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-below' 100000 200000)))
+Assert-Eq 'entering 25 blocks'  'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-25' 240000 260000)))
+Assert-Eq 'entering 30 blocks'  'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-30' 270000 310000)))
+Assert-Eq 'entering 35 blocks'  'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-35' 340000 355000)))
+Assert-Eq 'jumping two bands blocks once' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-jump' 260000 360000)))
+Assert-Eq 'within a band - no block' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-within' 260000 290000)))
+Assert-Eq 'drop after compaction - no block' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-drop' 400000 260000)))
+Assert-Eq 'climb back over the switch point - blocks again' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-reclimb' 100000 260000)))
+
+# Bands counted from the switch point
+$env:CTX_WATCH_SWITCHPOINT = '22'
+Assert-Eq 'switch 22: 23 -> 26 is band 22 -> 22, no block' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-22a' 230000 260000)))
+Assert-Eq 'switch 22: 26 -> 27 enters band 27, blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-22b' 260000 275000)))
+Remove-Item Env:\CTX_WATCH_SWITCHPOINT
+
+# Invalid blockStep falls back to 5 and still prints
+$env:CTX_WATCH_BLOCKSTEP = '0'
+Assert-Eq 'invalid blockStep - falls back to 5, blocks at 25' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-step0' 240000 260000)))
+Assert-Eq 'invalid blockStep - within band still prints the readout' $true ((Invoke-Hook 'Stop' (T 'b-step0b' 260000 290000)) -like '*ctx 29%*')
+Remove-Item Env:\CTX_WATCH_BLOCKSTEP
+
+# Guards
+$t = T 'b-guard' 240000 260000
+Assert-Eq 'stop_hook_active true - no block' '' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ stop_hook_active = $true }))
+Assert-Eq 'stop_hook_active true - readout still printed' $true ((Invoke-Hook 'Stop' $t -Extra @{ stop_hook_active = $true }) -like '*ctx 26%*')
+Assert-Eq 'stop_hook_active false - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ stop_hook_active = $false }))
+Assert-Eq 'absent stop_hook_active - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t))
+# Background work does not hold the block back: the reason says to hand over once it is done (D-008).
+Assert-Eq 'background_tasks array non-empty - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ background_tasks = @(@{ id = 'b1'; type = 'shell' }) }))
+Assert-Eq 'background_tasks count 1 - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ background_tasks = @{ count = 1; running = @(@{ id = 'b1' }) } }))
+Assert-Eq 'background_tasks empty array - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ background_tasks = @() }))
+Assert-Eq 'background_tasks count 0, running empty - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t -Extra @{ background_tasks = @{ count = 0; running = @() } }))
+
+# Queued messages are mid-turn: Stop ignores them. 24% -> 25.5% -> queued -> 26%.
+$t = T 'b-queued' 240000 260000 -Mid @((New-ToolResult), (New-Usage 255000), (New-Queued))
+Assert-Eq 'queued message mid-turn - crossing earlier in the turn still blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' $t))
+
+# Previous unknown: block above the switch point, nothing extra below it
+Assert-Eq 'previous unknown above the switch point - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-unk' 0 260000 -NoUser)))
+Assert-Eq 'previous unknown below the switch point - no block' '' (Get-Decision (Invoke-Hook 'Stop' (T 'b-unk2' 0 140000 -NoUser)))
+
+# Output shape
+$s = Invoke-Hook 'Stop' (T 'b-shape' 240000 260000)
+$o = $s | ConvertFrom-Json
+Assert-Eq 'block output is one line of JSON' 1 (@($s -split "`n").Count)
+Assert-Eq 'block output has exactly decision, reason, systemMessage' 'decision,reason,systemMessage' ((($o.PSObject.Properties.Name) | Sort-Object) -join ',')
+Assert-Eq 'reason names the percentage and the switch point' $true ($o.reason -like '*usage is 26% (260k/1000k), past the switch point of 25%*')
+Assert-Eq 'reason defers the hand-over until the step, background work included, is done' $true ($o.reason -like '*once the current step is complete, including any background work it started*')
+Assert-Eq 'reason says to end the turn to wait for running work' $true ($o.reason -like '*end this turn to wait for it*')
+Assert-Eq 'reason: with nothing running, act before the turn ends (D-003)' $true ($o.reason -like '*handled; otherwise act before you end this turn.*')
+$acct = [Environment]::UserName
+Assert-Eq 'reason names no person' $false ([bool]$acct -and $o.reason.ToLower().Contains($acct.ToLower()))
+Assert-Eq 'systemMessage carries the readout' $true ($o.systemMessage -like 'ctx 26% (260/1000k)*')
+
+# Config file path, and enabled false wins
+Set-Content -LiteralPath (Join-Path $fakeCfgDir 'ctx-watch.json') -Value '{"block": false}' -Encoding UTF8
+Assert-Eq 'env CTX_WATCH_BLOCK beats the config file' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-cfg' 240000 260000)))
+Remove-Item Env:\CTX_WATCH_BLOCK
+Set-Content -LiteralPath (Join-Path $fakeCfgDir 'ctx-watch.json') -Value '{"block": true}' -Encoding UTF8
+Assert-Eq 'config file block true - blocks' 'block' (Get-Decision (Invoke-Hook 'Stop' (T 'b-cfg2' 240000 260000)))
+$env:CTX_WATCH_ENABLED = 'false'
+Assert-Eq 'enabled false - no output at all' '' (Invoke-Hook 'Stop' (T 'b-dis' 240000 260000))
+Remove-Item Env:\CTX_WATCH_ENABLED
+Remove-Item (Join-Path $fakeCfgDir 'ctx-watch.json') -Force
+
+Write-Host "`n=== 12. Prompt note ===" -ForegroundColor Cyan
+# A queued message after the note already fired this turn: silent.
+$t = T 'n-queued' 240000 262000 -Mid @((New-ToolResult), (New-Usage 255000), (New-Queued))
+Assert-Eq 'queued message after a crossing earlier in the turn - note not repeated' '' (Invoke-Hook 'UserPromptSubmit' $t)
+Assert-Eq 'crossing without a queued message - note fires' $true ((Invoke-Hook 'UserPromptSubmit' (T 'n-plain' 240000 260000)) -like '*reached 26%*')
+$env:CTX_WATCH_BLOCK = 'true'
+Assert-Eq 'block on - note suppressed' '' (Invoke-Hook 'UserPromptSubmit' (T 'n-supp' 240000 260000))
+Remove-Item Env:\CTX_WATCH_BLOCK
 
 Write-Host "`n=== 13. Timing ===" -ForegroundColor Cyan
 # ~1.4 MB: 140 blocks of 9 x 1 KB filler + tool_result + usage.
