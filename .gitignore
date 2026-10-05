@@ -5,3 +5,6 @@ __pycache__/
 # transcripts contain full conversation text (email addresses, unrelated file
 # paths, customer and project detail) and do not belong in a shared repo.
 .claude/
+
+# Working plans and design notes. Local only.
+plans/
