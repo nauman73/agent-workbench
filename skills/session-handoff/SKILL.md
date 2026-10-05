@@ -94,6 +94,9 @@ Related handoff: <path>  ← only when another open handoff split from this one;
 ## Recent decisions
 <Decisions from recent sessions that the next step depends on and that are not yet written anywhere else. One or two sentences each: the decision and why. Skip the section if there are none.>
 
+## Corrections
+<Facts the user had to correct an agent on in this workstream, one line each: the correct fact and where it is recorded. Kept until the workstream closes. Skip the section if there are none.>
+
 ## Open questions / blockers
 <Anything waiting on the user, a teammate, an external system, or an unresolved design question. If nothing, write "None.">
 
@@ -109,6 +112,8 @@ Related handoff: <path>  ← only when another open handoff split from this one;
 ```
 
 **TODOs are one line each.** Name the action and, where there is detail, link to the document section that holds it rather than copying the detail in. Each item appears once, under its owner. Parked items go under **Parked** with what they wait for. Done items are removed, not ticked and kept: git and the documents already record them.
+
+**Corrections stay until the workstream closes.** When the user corrects a factual claim an agent made (for example "launches are blocked" when they work), record the correct fact in one line, with a pointer to where it is written down. Keep it even when a document already records it. A corrected fact is one the model has already got wrong, and the documents that hold it are read only on demand, so without the line the next session can make the same mistake. Corrections of a proposal or a preference are not facts; they go through Recent decisions as usual.
 
 **Keep formatting minimal.** No emoji. Use bold only where missing it would cause harm, such as a warning that must not be skimmed past. A page where everything is emphasised has nothing emphasised, and the decoration costs tokens on every resume.
 
@@ -131,6 +136,7 @@ Steps, in order:
 1. **Find the doc.** If the user named a path, use it. If they said "the handoff" without specifying, run `Glob .claude/handoff-*.md` and pick the most recently modified one — but if there's more than one match and the right one isn't obvious, ask the user which. If `.claude/` has no matches, also try the legacy location `Glob plans/handoff-*.md` for handoffs written before this skill moved its default location; if you find one there, note the legacy location to the user when you echo back the summary so they know to expect future handoffs in `.claude/`.
 2. **Read the doc in full** with the Read tool. Do not skim or read partial ranges: a half-read handoff produces a confident resume from the wrong state. If the doc's status line says it is **closed and replaced by** another handoff, tell the user and offer to resume from the replacement instead.
    **Then read the house-rules file**, if the handoff links one, also in full. It is short, and the rules in it exist for the mistakes that cost the most, so it is read on every resume rather than left to a judgement about whether the next piece of work falls under it.
+   If the handoff tells you to read another document, or part of one, in full, read all of it, in as many Read calls as it takes. A read that stops early because the file is too large for one call is not finished: continue from where it stopped instead of starting work.
    **Leave the other linked files unread for now.** The decision log and any saved transcripts are listed in the handoff so they can be found, not so they are loaded on every resume; they are also the files that grow large. Read the decision log when a question turns on why something was decided, and a transcript only when the handoff cannot answer a specific question.
 3. **Verify the working state matches.** Run `git status` and `git log -5 --oneline`. Compare against the "Branch" line in the handoff. If they don't match (different branch, missing modified files, advanced commits), surface the discrepancy to the user before proceeding — do not silently reconcile.
 4. **Echo back a tight summary** to the user: 2–4 lines covering the goal, the next step from the doc, and any open question or blocker. This proves you read it and gives the user a chance to correct stale info.
@@ -455,6 +461,7 @@ For **split**: the old handoff stays open, so update it as normal for whatever t
 - **Rewrite "Current state", "Next step" and "TODOs" in place** to describe now. Do not add dated layers ("UPDATED <date>", "Session 4 notes", "Arising from the review…") and do not keep superseded text for reference. Each layer seems small when added, and together they are what turns a handoff into a history book that every resume pays for in full.
 - Remove TODOs that are done, merge duplicates, and keep each remaining item under its owner.
 - Carry forward recent decisions that still apply. Do not remove a decision because it looks superseded or settled: propose it in the decision table (see "Decisions leaving the handoff"), usually as log or drop, and let the user choose.
+- Keep every line under **Corrections** while the workstream is open, and add a line for any correction made this session. Do not offer them for removal or move them into a document: being documented is not enough for these (see "Corrections stay until the workstream closes").
 - If the existing doc predates this template (for example it has a "Key decisions & context" section, or house rules written inline), keep its content and its shape; do not restructure it unasked. The offer to convert it is made once per save, at the size check after the file is saved (see "SAVE mode — size check"), never here during the update, so it can be combined with a size warning into a single offer. The conversion is the user's call.
 - If the user declines converting (they answer at the size check, after the file is saved), add this line to the saved file straight away, as a small follow-up edit, so that a resuming session is not misled by stale dated sections and later saves do not ask again: `> Older layout kept by choice on <YYYY-MM-DD>; do not offer to convert it again. The undated sections are current; where dated sections conflict with them, the undated sections win.` Put it under the status line, after any `Previous handoff:` / `Related handoff:` lines. Add it once; keep it on later saves.
 - **Preserve any `## Handoff preferences` block verbatim.** It is the record of what the user
@@ -473,6 +480,8 @@ For **split**: the old handoff stays open, so update it as normal for whatever t
 - **drop** it without saving it anywhere.
 
 All five are legitimate, and none is a precondition for another. **Never remove a decision on your own judgement**, and never create a decision log the user has not chosen. Making the offer is enough. Respect the choice, including "drop it": the user knows which decisions are already obvious from the code, and which ones they will never revisit.
+
+Lines under **Corrections** are not offered here: they stay until the workstream closes.
 
 **Make the offer as one table, not one question per decision.** Propose a choice for every decision, with a short reason, and let the user approve the lot or amend individual rows in a single reply. A row may propose two choices that go together, such as "document + log":
 

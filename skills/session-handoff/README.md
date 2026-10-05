@@ -24,14 +24,16 @@ Two modes, chosen from how you phrase the request.
 **SAVE** — writes a self-contained snapshot to `.claude/handoff-<slug>.md`:
 the goal, where things stand with exact file paths and line numbers, the single
 next concrete action, one-line TODOs grouped by owner, recent decisions the next
-step depends on, and open blockers. Standing working rules and an optional decision
+step depends on, facts the user has had to correct (kept until the work is done, so
+the next session does not repeat the mistake), and open blockers. Standing working rules and an optional decision
 log live in their own files, which the handoff links rather than copies.
 
 Say any of: *"save the session"*, *"I'm about to /clear"*, *"compact is coming"*,
 *"checkpoint this work"*, *"update the handoff"*.
 
 **RESUME** — finds the handoff, reads it and any linked house-rules file in full
-(the decision log and transcripts only when a question needs them), checks `git status` and
+(the decision log and transcripts only when a question needs them), finishes reading any
+document the handoff says to read in full even when it takes several reads, checks `git status` and
 `git log -5` against the branch the handoff recorded, echoes back a short summary,
 and then **stops and waits**.
 
