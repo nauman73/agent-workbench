@@ -49,6 +49,21 @@ function New-RealUser   { (@{ type = 'user'; message = @{ role = 'user'; content
 function New-ToolResult { (@{ type = 'user'; message = @{ role = 'user'; content = @(@{ type = 'tool_result'; content = 'ok' }) } } | ConvertTo-Json -Compress -Depth 10) }
 function New-AttTokenUsage { param([int]$Total) (@{ type = 'attachment'; attachment = @{ type = 'token_usage'; used = 1; total = $Total; remaining = 1 } } | ConvertTo-Json -Compress -Depth 10) }
 function New-AttModel      { param([string]$Id)  (@{ type = 'attachment'; attachment = @{ type = 'model'; identity = @{ modelId = $Id } } } | ConvertTo-Json -Compress -Depth 10) }
+# Assistant text record of about $Size bytes. No "usage" and no "user" in it,
+# so the hook's -like filters skip it, as they skip real prose records.
+function New-Filler {
+    param([int]$Count, [int]$Size = 1000)
+    $line = (@{ type = 'assistant'; message = @{ role = 'assistant'; content = @(@{ type = 'text'; text = ('x' * $Size) }) } } | ConvertTo-Json -Compress -Depth 10)
+    return @(1..$Count | ForEach-Object { $line })
+}
+function Write-Lines {
+    # Writes UTF-8 WITHOUT a BOM, so a test controls whether a BOM is present.
+    param([string]$Name, [string[]]$Lines, [switch]$Bom)
+    $p = Join-Path $tmp "$Name.jsonl"
+    $enc = New-Object System.Text.UTF8Encoding($Bom.IsPresent)
+    [System.IO.File]::WriteAllText($p, (($Lines -join "`n") + "`n"), $enc)
+    return $p
+}
 
 function New-Transcript {
     # Builds: [extra lines] prevUsage, realUser, currUsage
@@ -247,6 +262,58 @@ Assert-Eq 'Stop branch emits JSON only' $true ($s.StartsWith('{') -and $s.EndsWi
 $u = Invoke-Hook 'UserPromptSubmit' $t
 Assert-Eq 'UserPromptSubmit branch never emits JSON' $false ($u.StartsWith('{'))
 Assert-Eq 'UserPromptSubmit output is a single line' 1 (@($u -split "`n").Count)
+
+Write-Host "`n=== 10. Tail read ===" -ForegroundColor Cyan
+# Previous usage beyond 256 KB and beyond 400 lines: 600 x 1 KB of filler.
+# 26.0% -> 26.05% is the same 1% bucket, so a found previous means silence.
+$l = @((New-AttTokenUsage 1000000), (New-Usage 260000), (New-RealUser)) + (New-Filler 600) + @((New-Usage 260500))
+$p = Write-Lines 'wide-prev' $l
+Assert-Eq 'widening finds a previous usage record beyond 256 KB' '' (Invoke-Hook 'Stop' $p)
+
+# token_usage attachment 300 KB back: exact denominator still found.
+$l = @((New-AttTokenUsage 980000)) + (New-Filler 300) + @((New-Usage 200000), (New-RealUser), (New-Usage 260000))
+$p = Write-Lines 'wide-att' $l
+Assert-Eq 'widening finds the token_usage attachment beyond 256 KB' `
+    'ctx 26% (260/980k)' (Remove-Band (Get-SysMsg (Invoke-Hook 'Stop' $p)))
+
+# BOM at the start, attachment on the first line, file under 256 KB.
+$l = @((New-AttTokenUsage 980000), (New-Usage 200000), (New-RealUser), (New-Usage 260000))
+$p = Write-Lines 'bom' $l -Bom
+Assert-Eq 'BOM file - first record still parsed' `
+    'ctx 26% (260/980k)' (Remove-Band (Get-SysMsg (Invoke-Hook 'Stop' $p)))
+
+# Boundary cut: size the filler so the 256 KB window starts exactly at a line start.
+$tailLines = @((New-Usage 200000), (New-RealUser), (New-Usage 260000))
+$tailBytes = [System.Text.Encoding]::UTF8.GetByteCount((($tailLines -join "`n") + "`n"))
+# @() because a one-element array returned from a function unrolls to a string.
+$fillBytes = [System.Text.Encoding]::UTF8.GetByteCount(@(New-Filler 1 -Size 1000)[0] + "`n")
+$overhead  = $fillBytes - 1000                    # JSON wrapper + newline around the text
+$room = 262144 - $tailBytes                       # bytes the window holds before the tail lines
+$n    = [math]::Floor($room / $fillBytes)
+$odd  = $room - $n * $fillBytes                   # one odd-sized line takes up the rest
+if ($odd -le $overhead) { $odd += $fillBytes; $n -= 1 }
+$l = @((New-AttTokenUsage 1000000)) + (New-Filler 400) + (New-Filler 1 -Size ($odd - $overhead)) + (New-Filler $n) + $tailLines
+$p = Write-Lines 'boundary' $l
+$bytes = [System.IO.File]::ReadAllBytes($p)
+# Self-check: the window's first byte must be the start of the odd line.
+Assert-Eq 'fixture: byte before the window is a newline' 10 $bytes[$bytes.Length - 262144 - 1]
+Assert-Eq 'window starting on a line boundary keeps that line' `
+    'ctx 26% (260/1000k)' (Remove-Band (Get-SysMsg (Invoke-Hook 'Stop' $p)))
+
+# File held open for writing by another handle, as Claude Code does.
+$t = New-Transcript -Name 'locked' -PrevUsed 200000 -CurrUsed 260000 -Prefix @(New-AttTokenUsage 1000000)
+$h = [System.IO.File]::Open($t, 'Open', 'ReadWrite', 'ReadWrite')
+try { $s = Invoke-Hook 'Stop' $t } finally { $h.Dispose() }
+Assert-Eq 'reads a transcript another handle holds open for writing' 'ctx 26% (260/1000k)' (Remove-Band (Get-SysMsg $s))
+
+Write-Host "`n=== 13. Timing ===" -ForegroundColor Cyan
+# ~1.4 MB: 140 blocks of 9 x 1 KB filler + tool_result + usage.
+$l = @((New-AttTokenUsage 1000000), (New-Usage 200000), (New-RealUser))
+1..140 | ForEach-Object { $l += New-Filler 9; $l += New-ToolResult; $l += New-Usage (200000 + $_ * 400) }
+$p = Write-Lines 'timing' $l
+$best = (1..3 | ForEach-Object { (Measure-Command { Invoke-Hook 'Stop' $p | Out-Null }).TotalMilliseconds } | Measure-Object -Minimum).Minimum
+Write-Host "        best of 3: $([math]::Round($best)) ms, file $([math]::Round((Get-Item $p).Length / 1MB, 2)) MB"
+Assert-Eq 'full Stop run on a 1.4 MB transcript under 500 ms' $true ($best -lt 500)
 
 Write-Host "`n----------------------------------------" -ForegroundColor Cyan
 Write-Host "  $pass passed, $fail failed" -ForegroundColor $(if ($fail) { 'Red' } else { 'Green' })

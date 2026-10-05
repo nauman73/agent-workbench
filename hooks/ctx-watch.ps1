@@ -53,6 +53,98 @@ function ConvertTo-Bool {
     return @('0','false','no','off') -notcontains ("$v").ToLower()
 }
 
+function Read-TranscriptTail {
+    # The last $Bytes of the transcript as lines. FileShare.ReadWrite because
+    # Claude Code holds the file open for writing while the hook runs. Reading
+    # starts one byte before the window, so the first segment is always partial
+    # or empty and can be dropped without losing a whole record.
+    param([string]$Path, [long]$Bytes)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $from = [math]::Max([long]0, $fs.Length - $Bytes - 1)
+        [void]$fs.Seek($from, [System.IO.SeekOrigin]::Begin)
+        $buf = New-Object byte[] ([int]($fs.Length - $from))
+        $n = 0
+        while ($n -lt $buf.Length) {
+            $r = $fs.Read($buf, $n, $buf.Length - $n)
+            if ($r -le 0) { break }
+            $n += $r
+        }
+    } finally { $fs.Dispose() }
+    $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $skip = ($from -gt 0)
+    foreach ($ln in $text.Split("`n")) {
+        if ($skip) { $skip = $false; continue }
+        $ln = $ln.TrimEnd("`r")
+        if ($ln.Length -gt 0) { $lines.Add($ln) }
+    }
+    return @{ Lines = $lines.ToArray(); Truncated = ($from -gt 0) }
+}
+
+function Get-TranscriptFacts {
+    # Single backward pass: current usage, attachments, the turn start, and
+    # the last usage record before that turn start.
+    param([string[]]$Lines, [switch]$QueuedIsTurnStart)
+    $used = $null; $idxUser = -1; $attTotal = $null; $modelId = $null
+    for ($i = $Lines.Count - 1; $i -ge 0; $i--) {
+        $ln = $Lines[$i]
+        if ($null -eq $used -and $ln -like '*"usage"*') {
+            try {
+                $u = ($ln | ConvertFrom-Json).message.usage
+                if ($u) {
+                    $s = [int]$u.input_tokens + [int]$u.cache_read_input_tokens + [int]$u.cache_creation_input_tokens
+                    if ($s -gt 0) { $used = $s }
+                }
+            } catch { }
+        }
+        # Tool results are most of the "user" records and never a turn start.
+        # The unescaped pattern cannot occur inside prompt text, so skipping
+        # them unparsed is safe; a spacing variant just falls through to the parse.
+        if ($idxUser -lt 0 -and $ln -like '*"user"*' -and $ln -notlike '*"type":"tool_result"*') {
+            try {
+                $o = $ln | ConvertFrom-Json
+                if ($o.type -eq 'user') {
+                    $c = $o.message.content
+                    $isToolResult = $false
+                    if ($c -is [array]) {
+                        foreach ($blk in $c) { if ($blk.type -eq 'tool_result') { $isToolResult = $true; break } }
+                    }
+                    if (-not $isToolResult) { $idxUser = $i }
+                }
+            } catch { }
+        }
+        if ($null -eq $attTotal -and $ln -like '*"token_usage"*') {
+            try {
+                $a = ($ln | ConvertFrom-Json).attachment
+                if ($a.type -eq 'token_usage' -and [int]$a.total -gt 0) { $attTotal = [int]$a.total }
+            } catch { }
+        }
+        if ($null -eq $modelId -and $ln -like '*"modelId"*') {
+            try {
+                $a = ($ln | ConvertFrom-Json).attachment
+                if ($a.type -eq 'model' -and $a.identity.modelId) { $modelId = [string]$a.identity.modelId }
+            } catch { }
+        }
+    }
+    $prevUsed = $null
+    if ($idxUser -gt 0) {
+        for ($i = $idxUser - 1; $i -ge 0; $i--) {
+            if ($Lines[$i] -notlike '*"usage"*') { continue }
+            try {
+                $u = ($Lines[$i] | ConvertFrom-Json).message.usage
+                if ($u) {
+                    $s = [int]$u.input_tokens + [int]$u.cache_read_input_tokens + [int]$u.cache_creation_input_tokens
+                    if ($s -gt 0) { $prevUsed = $s; break }
+                }
+            } catch { }
+        }
+    }
+    return @{ used = $used; attTotal = $attTotal; modelId = $modelId; prevUsed = $prevUsed }
+}
+
 try {
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
@@ -101,77 +193,18 @@ try {
     $stepBelow   = [int]$cfg.stepBelow
     $stepWithin  = [int]$cfg.stepWithin
 
-    # ---- single backward pass over the transcript tail ----------------------
-    $lines    = @(Get-Content -LiteralPath $tp -Tail 400 -Encoding UTF8)
-    $used     = $null
-    $idxUser  = -1
-    $attTotal = $null
-    $modelId  = $null
-
-    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-        $ln = $lines[$i]
-        if ($null -eq $used -and $ln -like '*"usage"*') {
-            try {
-                $u = ($ln | ConvertFrom-Json).message.usage
-                if ($u) {
-                    $s = [int]$u.input_tokens + [int]$u.cache_read_input_tokens + [int]$u.cache_creation_input_tokens
-                    if ($s -gt 0) { $used = $s }
-                }
-            } catch { }
-        }
-        if ($idxUser -lt 0 -and $ln -like '*"user"*') {
-            try {
-                $o = $ln | ConvertFrom-Json
-                if ($o.type -eq 'user') {
-                    $c = $o.message.content
-                    $isToolResult = $false
-                    if ($c -is [array]) {
-                        foreach ($blk in $c) { if ($blk.type -eq 'tool_result') { $isToolResult = $true; break } }
-                    }
-                    if (-not $isToolResult) { $idxUser = $i }
-                }
-            } catch { }
-        }
-        if ($null -eq $attTotal -and $ln -like '*"token_usage"*') {
-            try {
-                $a = ($ln | ConvertFrom-Json).attachment
-                if ($a.type -eq 'token_usage' -and [int]$a.total -gt 0) { $attTotal = [int]$a.total }
-            } catch { }
-        }
-        if ($null -eq $modelId -and $ln -like '*"modelId"*') {
-            try {
-                $a = ($ln | ConvertFrom-Json).attachment
-                if ($a.type -eq 'model' -and $a.identity.modelId) { $modelId = [string]$a.identity.modelId }
-            } catch { }
-        }
+    # ---- transcript facts: 256 KB tail, widened once to 2 MB ---------------
+    $tail  = Read-TranscriptTail $tp 262144
+    $facts = Get-TranscriptFacts $tail.Lines
+    if ($tail.Truncated -and ($null -eq $facts.used -or $null -eq $facts.prevUsed -or $null -eq $facts.attTotal)) {
+        $tail  = Read-TranscriptTail $tp 2097152
+        $facts = Get-TranscriptFacts $tail.Lines
     }
-    if ($null -eq $used) { exit 0 }
-
-    # Widen once for the attachment before dropping down the ladder.
-    if ($null -eq $attTotal -and $lines.Count -ge 400) {
-        foreach ($ln in @(Get-Content -LiteralPath $tp -Tail 2000 -Encoding UTF8)) {
-            if ($ln -notlike '*"token_usage"*') { continue }
-            try {
-                $a = ($ln | ConvertFrom-Json).attachment
-                if ($a.type -eq 'token_usage' -and [int]$a.total -gt 0) { $attTotal = [int]$a.total }
-            } catch { }
-        }
-    }
-
-    # ---- previous turn's ending context -------------------------------------
-    $prevUsed = $null
-    if ($idxUser -gt 0) {
-        for ($i = $idxUser - 1; $i -ge 0; $i--) {
-            if ($lines[$i] -notlike '*"usage"*') { continue }
-            try {
-                $u = ($lines[$i] | ConvertFrom-Json).message.usage
-                if ($u) {
-                    $s = [int]$u.input_tokens + [int]$u.cache_read_input_tokens + [int]$u.cache_creation_input_tokens
-                    if ($s -gt 0) { $prevUsed = $s; break }
-                }
-            } catch { }
-        }
-    }
+    if ($null -eq $facts.used) { exit 0 }
+    $used     = $facts.used
+    $attTotal = $facts.attTotal
+    $modelId  = $facts.modelId
+    $prevUsed = $facts.prevUsed
 
     # ---- denominator: resolution ladder, first hit wins ---------------------
     $window = $null
