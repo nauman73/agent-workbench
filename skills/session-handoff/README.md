@@ -29,8 +29,10 @@ the next session does not repeat the mistake), and open blockers. Standing worki
 log live in their own files, which the handoff links rather than copies.
 
 Say any of: *"save the session"*, *"I'm about to /clear"*, *"compact is coming"*,
-*"checkpoint this work"*, *"update the handoff"*. On Windows it can also open the next
-session for you, so you need not start it and paste the resume line yourself; see
+*"checkpoint this work"*, *"update the handoff"*. It can also open the next session for
+you, so you need not start it and paste the resume line yourself: in a terminal on Windows, or
+inside the Claude desktop app on any system, where one question settles the new session's context,
+title and whether it stays nested, and the answers can be saved for the task; see
 [`docs/session-chaining.md`](../../docs/session-chaining.md#opening-the-next-session-without-chaining).
 
 **RESUME** — finds the handoff, reads it and any linked house-rules file in full
@@ -82,8 +84,9 @@ of letting a future session discover it the hard way.
 
 **Used with `ctx-watch`, the skill can chain sessions.** At the switch point it saves the
 handoff, opens the next session and stops, and that session resumes and carries on without
-waiting for confirmation; [`docs/session-chaining.md`](../../docs/session-chaining.md) covers
-setup, requirements and limits.
+waiting for confirmation. In the Claude desktop app, a relay keeps every generation inside the
+app. [`docs/session-chaining.md`](../../docs/session-chaining.md) covers setup, requirements and
+limits.
 
 ## Optional: archive the full transcript
 

@@ -12,7 +12,9 @@ the one place that describes it; the two READMEs cover their own components and 
 
 - [What it does](#what-it-does)
   - [Opening the next session without chaining](#opening-the-next-session-without-chaining)
+  - [Opening it from the Claude desktop app](#opening-it-from-the-claude-desktop-app)
 - [How a hand-over happens](#how-a-hand-over-happens)
+  - [Chains in the Claude desktop app: the relay](#chains-in-the-claude-desktop-app-the-relay)
 - [Requirements](#requirements)
 - [Setup checklist](#setup-checklist)
   - [Once per machine](#once-per-machine)
@@ -45,9 +47,39 @@ and waits for your instructions; the old one notes the hand-over in the handoff
 `ctx-watch` too, from a save you ask for yourself.
 
 To make it automatic, or to stop the offer, add one line to the handoff's
-`## Handoff preferences` block: `- **Open the next session:** always`, or `never`. The launch is the
-same as a chain's, so the [requirements](#requirements) and the
-[one-time dialogs](#once-per-machine) below apply to it as well.
+`## Handoff preferences` block: `- **Open the next session:** always`, or `never`. Outside the
+Claude desktop app the launch is the same as a chain's, so the [requirements](#requirements) and
+the [one-time dialogs](#once-per-machine) below apply to it as well.
+
+### Opening it from the Claude desktop app
+
+In the Claude desktop app (Code tab), the next session opens inside the app instead of in a
+terminal, on any operating system, linked to the one that started it. Before the launch the agent
+asks one question covering three choices, plus whether to keep the answers:
+
+- **Context:** fresh, where the new session starts small and reads the handoff (recommended), or a
+  fork that carries the whole conversation.
+- **Title:** the current session's title with its number raised by one (`payment-retry-3` after
+  `payment-retry-2`; `-2` is appended when there is no number), or one you type.
+- **Detach:** keep the new session nested under this one (recommended), or move it to the top level,
+  where it is not archived with this session and sends no notes back to it.
+
+Saved answers go into the handoff's preferences block, and later launches of the same task ask
+nothing:
+
+```markdown
+- **Next session context:** fresh        (ask | fresh | fork)
+- **Next session title:** sequence       (ask | sequence)
+- **Detach the next session:** never     (ask | always | never)
+```
+
+A title you name in the request ("open payment-retry-4") is used as given. After the launch the
+agent sets the title, reads it back, and says so if it did not take; the `Handover:` line records it
+(`Handover: next session "payment-retry-3" launched <time>`).
+
+The app starts a session only in a turn that carries your own words, so this launch happens when
+you ask for it, or when an `always` preference applies to a save you asked for. Where the app
+refuses, or outside the app, the agent falls back to the launch script.
 
 ## How a hand-over happens
 
@@ -70,13 +102,32 @@ same as a chain's, so the [requirements](#requirements) and the
    `Chain: generation 3 of 5 · next session launched 2026-10-05 14:20`.
 5. **The launch.** A bundled script opens the next session in the project folder with the prompt
    `Use the session-handoff skill in RESUME mode on .claude/handoff-<slug>.md and continue per the house rules.`
-   The old session says so in one line and stops working on the task.
+   In the desktop app, a [relay](#chains-in-the-claude-desktop-app-the-relay) wakes a waiting
+   session instead. The old session says so in one line and stops working on the task.
 6. **The resume.** The new session reads the handoff and house rules, checks `git status` against
    the recorded branch, and continues from the handoff's "Next step". A question that needs you is
    written into the handoff's open questions; the session carries on with whatever does not depend
    on it, and stops when nothing independent is left.
 7. **The limit.** When the next generation would exceed the limit, the agent saves the handoff,
    writes `Chain: stopped at the limit of <N>`, tells you, and launches nothing.
+
+### Chains in the Claude desktop app: the relay
+
+A chain step runs without anyone typing, and the desktop app starts sessions only in a turn that
+carries your words, so a chain cannot open its next generation inside the app on its own. By
+default the launch script opens it in a terminal instead. To keep every generation inside the app,
+ask for the chain to run as a relay when it starts. In that turn the agent:
+
+1. asks the [launch question](#opening-it-from-the-claude-desktop-app) once, and starts every
+   remaining generation up to the limit, titled in sequence. Each one replies that it is waiting and
+   does nothing more.
+2. records their ids in the handoff, under the chain line:
+   `Relay: 2 local_<id> · 3 local_<id> · 4 local_<id> · 5 local_<id>`.
+
+At each chain step, the agent sends `hand over` to the next generation instead of launching
+anything, and that generation resumes from the handoff. If the message cannot be sent, or a
+generation was never started, the script launches it instead. When the chain ends, the agent tells
+you which relay sessions are still waiting; archiving them is up to you.
 
 Stop conditions you already have, such as a plan's review point at the end of a phase, still
 apply: at one, the agent saves the handoff without launching and waits for you. The skill never
@@ -90,10 +141,11 @@ The exact rules the agent follows are in the skill's
 - **Claude Code, with the `ctx-watch` hook installed.** The hook's block is what starts a
   hand-over. GitHub Copilot, Cursor and Codex can run the `session-handoff` skill but not the hook,
   so chaining never triggers there.
-- **The standalone `claude` CLI on `PATH`.** The next session is started from the command line. A
-  copy bundled inside an editor extension is skipped, so an install that has only the VS Code
-  extension has nothing to launch.
-- **Windows, for the automatic launch.** The next session opens as a new tab in the current
+- **The standalone `claude` CLI on `PATH`, for the script launch.** The next session is started
+  from the command line. A copy bundled inside an editor extension is skipped, so an install that
+  has only the VS Code extension has nothing to launch. A launch from the Claude desktop app, and a
+  relay, need neither this nor Windows.
+- **Windows, for the automatic script launch.** The next session opens as a new tab in the current
   Windows Terminal window when `wt.exe` is on `PATH`, and in a new console window otherwise. On
   Linux and macOS the chain still saves the handoff, then prints the command to start the next
   session and pauses until you run it.
